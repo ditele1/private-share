@@ -16,6 +16,13 @@ Share a single Obsidian note through a private random link, with update, revoke,
 - Upload referenced Obsidian attachments such as images, PDF, Excel, Word and ZIP files
 - Convert ordinary wikilinks to plain text so a shared page does not expose the rest of the vault
 - Works on desktop and mobile Obsidian
+- Optional customer confirmation and discussion
+- Customer invitation links with separate random tokens
+- Visitors can identify themselves without creating an account
+- Confirmation states: Confirmed, Needs changes, Question
+- Comments and threaded replies are stored on the server separately from note content
+- Updating a note from Obsidian preserves customer discussion
+- Normal share links remain read-only and do not expose customer discussion
 - Server URL and API token are stored locally in Obsidian plugin data and are not part of this repository
 
 ## Typical workflow

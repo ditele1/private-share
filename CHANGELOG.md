@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0
+
+- Added optional customer confirmation and discussion mode
+- Added per-customer invitation links with secure random invitation tokens
+- Added first-visit name and company identification without account registration
+- Added Confirmed / Needs changes / Question status events
+- Added comments and threaded replies
+- Added invitation management and discussion viewer in the Obsidian plugin
+- Added revoke support for individual customer invitation links
+- Discussion data is stored separately from note content and survives note updates
+- Normal share links remain read-only and do not reveal customer discussions
 ## 0.2.0
 
 - Added optional password protection for shared pages and attachments
