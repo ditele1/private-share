@@ -1,9 +1,9 @@
 {
   "id": "private-share",
   "name": "Private Share",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "minAppVersion": "1.5.0",
-  "description": "Share one note through a private random link.",
+  "description": "Share one Obsidian note through a private random link with optional password and expiry.",
   "author": "Local",
   "isDesktopOnly": false
 }
