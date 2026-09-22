@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+
+- Fixed mobile/cross-device customer discussion menu visibility
+- Customer invitation and discussion actions now appear for every existing share
+- Removed reliance on stale local discussionEnabled state
+- Server remains the source of truth for whether discussion is enabled
 ## 0.3.0
 
 - Added optional customer confirmation and discussion mode

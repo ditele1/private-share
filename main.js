@@ -324,13 +324,6 @@ class InviteManagerModal extends Modal {
       cls: "private-share-muted",
     });
 
-    if (!this.share.discussionEnabled) {
-      c.createEl("p", {
-        text:
-          "\u8fd9\u7bc7\u5206\u4eab\u8fd8\u6ca1\u6709\u5f00\u542f\u5ba2\u6237\u786e\u8ba4/\u8bc4\u8bba\u3002\u8bf7\u5148\u66f4\u65b0\u5206\u4eab\u5e76\u5f00\u542f\u8be5\u9009\u9879\u3002",
-      });
-      return;
-    }
 
     const top = c.createDiv({ cls: "private-share-actions" });
     top
@@ -640,7 +633,6 @@ class ShareManagerModal extends Modal {
           cls: "private-share-badge",
         });
       }
-      if (share.discussionEnabled) {
         badges.createSpan({
           text: "\u5ba2\u6237\u8ba8\u8bba",
           cls: "private-share-badge",
@@ -691,7 +683,6 @@ class ShareManagerModal extends Modal {
               share
             ).open();
           });
-      }
 
       actions
         .createEl("button", {
@@ -793,7 +784,7 @@ class PrivateSharePlugin extends Plugin {
         )
           return false;
         const share = this.settings.shares[file.path];
-        if (!share || !share.discussionEnabled)
+        if (!share)
           return false;
         if (!checking) {
           new InviteManagerModal(
@@ -818,7 +809,7 @@ class PrivateSharePlugin extends Plugin {
         )
           return false;
         const share = this.settings.shares[file.path];
-        if (!share || !share.discussionEnabled)
+        if (!share)
           return false;
         if (!checking) {
           new DiscussionModal(
@@ -921,7 +912,6 @@ class PrivateSharePlugin extends Plugin {
                 )
             );
 
-            if (existing.discussionEnabled) {
               menu.addItem((item) =>
                 item
                   .setTitle("\u5ba2\u6237\u4e13\u5c5e\u94fe\u63a5")
@@ -948,7 +938,6 @@ class PrivateSharePlugin extends Plugin {
                     ).open()
                   )
               );
-            }
 
             menu.addItem((item) =>
               item
