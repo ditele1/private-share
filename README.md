@@ -1,6 +1,12 @@
 # Private Share for Obsidian
 
+[中文说明](README.zh-CN.md)
+
 A lightweight Obsidian plugin for sharing a single Markdown note through a self-hosted sharing service.
+
+## Repository description
+
+Share a single Obsidian note through a private random link, with update, revoke, attachment upload, desktop and mobile support.
 
 ## Features
 
@@ -12,17 +18,32 @@ A lightweight Obsidian plugin for sharing a single Markdown note through a self-
 - Works on desktop and mobile Obsidian
 - Server URL and API token are stored locally in Obsidian plugin data and are not part of this repository
 
+## Typical workflow
+
+1. Open a note in Obsidian
+2. Run `Share current note`
+3. The plugin uploads the note and referenced attachments
+4. The server returns a long random URL
+5. The URL is copied to the clipboard
+6. Share only that page with the recipient
+
+Existing shares can be updated while keeping the same URL, or revoked at any time.
+
 ## Installation
 
 This repository is intended for installation through BRAT or manual installation.
 
 Required runtime files:
 
-- main.js
-- manifest.json
-- styles.css
+- `main.js`
+- `manifest.json`
+- `styles.css`
 
-After installation, open Settings -> Private Share and configure:
+After installation, open:
+
+`Settings -> Private Share`
+
+and configure:
 
 - Share server URL
 - API token
@@ -31,17 +52,25 @@ After installation, open Settings -> Private Share and configure:
 
 This repository does not contain any personal server URL, Cloudflare token, API token, vault path, or share history.
 
-Local plugin configuration is stored in .obsidian/plugins/private-share/data.json and data.json is excluded from Git.
+Local plugin configuration is stored in:
+
+`.obsidian/plugins/private-share/data.json`
+
+and `data.json` is excluded from Git.
+
+Public pages are designed to expose only the explicitly shared note. Ordinary Obsidian wikilinks are converted to plain text instead of automatically exposing other notes.
 
 ## Server
 
 The plugin expects a compatible Private Share server exposing:
 
-- POST /api/publish
-- PUT /api/update/:id
-- DELETE /api/unpublish/:id
+- `POST /api/publish`
+- `PUT /api/update/:id`
+- `DELETE /api/unpublish/:id`
 
-Public pages are served under /s/<random-id>.
+Public pages are served under:
+
+`/s/<random-id>`
 
 ## License
 
