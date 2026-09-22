@@ -60,7 +60,7 @@ function computeExpiry(choice) {
   return new Date(Date.now() + hours * 3600000).toISOString();
 }
 function statusLabel(status) {
-  if (status === "confirmed") return "纭鏀跺埌";
+  if (status === "confirmed") return "\u786e\u8ba4\u6536\u5230";
   if (status === "needs_changes") return "\u9700\u8981\u4fee\u6539";
   if (status === "question") return "\u6709\u95ee\u9898";
   return status || "";
@@ -104,7 +104,7 @@ class ShareOptionsModal extends Modal {
     });
 
     new Setting(c)
-      .setName("璁块棶瀵嗙爜")
+      .setName("\u8bbf\u95ee\u5bc6\u7801")
       .setDesc(
         this.mode === "update" &&
           this.existing &&
@@ -127,8 +127,8 @@ class ShareOptionsModal extends Modal {
           this.mode === "update" &&
             this.existing &&
             this.existing.passwordProtected
-            ? "鏂板瘑鐮侊紙鍙暀绌猴級"
-            : "瀵嗙爜"
+            ? "\u65b0\u5bc6\u7801\uff08\u53ef\u7559\u7a7a\uff09"
+            : "\u5bc6\u7801"
         )
         .setDesc(
           this.mode === "update" &&
@@ -144,7 +144,7 @@ class ShareOptionsModal extends Modal {
               this.existing &&
               this.existing.passwordProtected
               ? "\u7559\u7a7a\u4fdd\u7559\u539f\u5bc6\u7801"
-              : "杈撳叆璁块棶瀵嗙爜"
+              : "\u8f93\u5165\u8bbf\u95ee\u5bc6\u7801"
           );
           text.onChange((value) => {
             this.password = value;
@@ -161,11 +161,11 @@ class ShareOptionsModal extends Modal {
       )
       .addDropdown((dropdown) => {
         if (this.mode === "update") {
-          dropdown.addOption("keep", "淇濇寔褰撳墠璁剧疆");
+          dropdown.addOption("keep", "\u4fdd\u6301\u5f53\u524d\u8bbe\u7f6e");
         }
         dropdown
-          .addOption("none", "姘镐箙鏈夋晥")
-          .addOption("1h", "1 灏忔椂")
+          .addOption("none", "\u6c38\u4e45\u6709\u6548")
+          .addOption("1h", "1 \u5c0f\u65f6")
           .addOption("1d", "1 \u5929")
           .addOption("7d", "7 \u5929")
           .addOption("30d", "30 \u5929")
@@ -176,7 +176,7 @@ class ShareOptionsModal extends Modal {
       });
 
     new Setting(c)
-      .setName("鍏佽瀹㈡埛纭 / 璇勮")
+      .setName("\u5141\u8bb8\u5ba2\u6237\u786e\u8ba4 / \u8bc4\u8bba")
       .setDesc(
         "\u5f00\u542f\u540e\u53ef\u4ee5\u4e3a\u4e0d\u540c\u5ba2\u6237\u751f\u6210\u4e13\u5c5e\u9080\u8bf7\u94fe\u63a5\u3002\u5ba2\u6237\u65e0\u9700\u6ce8\u518c\uff0c\u9996\u6b21\u586b\u5199\u59d3\u540d\u548c\u516c\u53f8\u540e\u5373\u53ef\u786e\u8ba4\u6536\u5230\u3001\u63d0\u51fa\u4fee\u6539\u610f\u89c1\u548c\u56de\u590d\u8ba8\u8bba\u3002\u666e\u901a\u5206\u4eab\u94fe\u63a5\u4ecd\u7136\u4fdd\u6301\u53ea\u8bfb\u3002"
       )
@@ -192,13 +192,13 @@ class ShareOptionsModal extends Modal {
       cls: "private-share-modal-footer",
     });
     footer
-      .createEl("button", { text: "鍙栨秷" })
+      .createEl("button", { text: "\u53d6\u6d88" })
       .addEventListener("click", () => this.close());
 
     footer
       .createEl("button", {
         text:
-          this.mode === "update" ? "鏇存柊鍒嗕韩" : "鍒涘缓鍒嗕韩",
+          this.mode === "update" ? "\u66f4\u65b0\u5206\u4eab" : "\u521b\u5efa\u5206\u4eab",
         cls: "mod-cta",
       })
       .addEventListener("click", async () => {
@@ -241,7 +241,7 @@ class CreateInviteModal extends Modal {
   onOpen() {
     const c = this.contentEl;
     c.empty();
-    c.createEl("h2", { text: "鐢熸垚瀹㈡埛涓撳睘閾炬帴" });
+    c.createEl("h2", { text: "\u751f\u6210\u5ba2\u6237\u4e13\u5c5e\u94fe\u63a5" });
     c.createEl("p", {
       text:
         "\u59d3\u540d\u548c\u516c\u53f8\u53ea\u7528\u4e8e\u9884\u586b\u3002\u5ba2\u6237\u9996\u6b21\u6253\u5f00\u65f6\u4ecd\u53ef\u786e\u8ba4\u6216\u4fee\u6539\u81ea\u5df1\u7684\u59d3\u540d\u548c\u516c\u53f8\u3002",
@@ -249,7 +249,7 @@ class CreateInviteModal extends Modal {
     });
 
     new Setting(c)
-      .setName("瀹㈡埛濮撳悕 / 澶囨敞")
+      .setName("\u5ba2\u6237\u59d3\u540d / \u5907\u6ce8")
       .setDesc("\u4f8b\u5982\uff1a\u5f20\u5de5")
       .addText((text) =>
         text.onChange((value) => {
@@ -258,8 +258,8 @@ class CreateInviteModal extends Modal {
       );
 
     new Setting(c)
-      .setName("鍏徃")
-      .setDesc("渚嬪锛欰BC Motor")
+      .setName("\u516c\u53f8")
+      .setDesc("\u4f8b\u5982\uff1aABC Motor")
       .addText((text) =>
         text.onChange((value) => {
           this.company = value;
@@ -270,11 +270,11 @@ class CreateInviteModal extends Modal {
       cls: "private-share-modal-footer",
     });
     footer
-      .createEl("button", { text: "鍙栨秷" })
+      .createEl("button", { text: "\u53d6\u6d88" })
       .addEventListener("click", () => this.close());
     footer
       .createEl("button", {
-        text: "鐢熸垚閾炬帴",
+        text: "\u751f\u6210\u94fe\u63a5",
         cls: "mod-cta",
       })
       .addEventListener("click", async () => {
@@ -286,7 +286,7 @@ class CreateInviteModal extends Modal {
           );
           this.close();
           await this.plugin.copyUrl(invite.url, false);
-          new Notice("瀹㈡埛涓撳睘閾炬帴宸茬敓鎴愬苟澶嶅埗");
+          new Notice("\u5ba2\u6237\u4e13\u5c5e\u94fe\u63a5\u5df2\u751f\u6210\u5e76\u590d\u5236");
           if (this.onCreated) await this.onCreated();
         } catch (error) {
           new Notice(
@@ -318,7 +318,7 @@ class InviteManagerModal extends Modal {
   async render() {
     const c = this.contentEl;
     c.empty();
-    c.createEl("h2", { text: "瀹㈡埛涓撳睘閾炬帴" });
+    c.createEl("h2", { text: "\u5ba2\u6237\u4e13\u5c5e\u94fe\u63a5" });
     c.createEl("p", {
       text: this.share.title || this.notePath,
       cls: "private-share-muted",
@@ -391,13 +391,13 @@ class InviteManagerModal extends Modal {
           formatTime(invite.createdAt) +
           (invite.lastOpenedAt
             ? " \u00b7 \u6700\u8fd1\u6253\u5f00\uff1a" + formatTime(invite.lastOpenedAt)
-            : " 路 灏氭湭鎵撳紑"),
+            : " \u00b7 \u5c1a\u672a\u6253\u5f00"),
         cls: "private-share-muted",
       });
 
       if (invite.active === false) {
         info.createSpan({
-          text: "宸叉挙閿€",
+          text: "\u5df2\u64a4\u9500",
           cls: "private-share-badge",
         });
       }
@@ -408,14 +408,14 @@ class InviteManagerModal extends Modal {
 
       if (invite.active !== false && invite.url) {
         actions
-          .createEl("button", { text: "澶嶅埗閾炬帴" })
+          .createEl("button", { text: "\u590d\u5236\u94fe\u63a5" })
           .addEventListener("click", async () => {
             await this.plugin.copyUrl(invite.url);
           });
 
         actions
           .createEl("button", {
-            text: "鎾ら攢",
+            text: "\u64a4\u9500",
             cls: "mod-warning",
           })
           .addEventListener("click", async () => {
@@ -424,7 +424,7 @@ class InviteManagerModal extends Modal {
                 this.share,
                 invite.id
               );
-              new Notice("瀹㈡埛閾炬帴宸叉挙閿€");
+              new Notice("\u5ba2\u6237\u94fe\u63a5\u5df2\u64a4\u9500");
               await this.render();
             } catch (error) {
               new Notice(
@@ -460,7 +460,7 @@ class DiscussionModal extends Modal {
   async render() {
     const c = this.contentEl;
     c.empty();
-    c.createEl("h2", { text: "瀹㈡埛纭 / 璁ㄨ璁板綍" });
+    c.createEl("h2", { text: "\u5ba2\u6237\u786e\u8ba4 / \u8ba8\u8bba\u8bb0\u5f55" });
     c.createEl("p", {
       text: this.share.title || this.notePath,
       cls: "private-share-muted",
@@ -505,8 +505,8 @@ class DiscussionModal extends Modal {
       });
       head.createEl("strong", {
         text:
-          (entry.name || "璁垮") +
-          (entry.company ? " 路 " + entry.company : ""),
+          (entry.name || "\u8bbf\u5ba2") +
+          (entry.company ? " \u00b7 " + entry.company : ""),
       });
       head.createSpan({
         text: formatTime(entry.createdAt),
@@ -544,7 +544,7 @@ class DiscussionModal extends Modal {
             await this.render();
           } catch (error) {
             new Notice(
-              "鏇存柊鐘舵€佸け璐ワ細" +
+              "\u66f4\u65b0\u72b6\u6001\u5931\u8d25\uff1a" +
                 (error && error.message
                   ? error.message
                   : error),
@@ -584,7 +584,7 @@ class ShareManagerModal extends Modal {
   render() {
     const c = this.contentEl;
     c.empty();
-    c.createEl("h2", { text: "Private Share 绠＄悊" });
+    c.createEl("h2", { text: "Private Share \u7ba1\u7406" });
 
     const entries = Object.entries(
       this.plugin.settings.shares || {}
@@ -630,7 +630,7 @@ class ShareManagerModal extends Modal {
       });
       if (share.passwordProtected) {
         badges.createSpan({
-          text: "瀵嗙爜淇濇姢",
+          text: "\u5bc6\u7801\u4fdd\u62a4",
           cls: "private-share-badge",
         });
       }
@@ -642,7 +642,7 @@ class ShareManagerModal extends Modal {
       }
       if (share.discussionEnabled) {
         badges.createSpan({
-          text: "瀹㈡埛璁ㄨ",
+          text: "\u5ba2\u6237\u8ba8\u8bba",
           cls: "private-share-badge",
         });
       }
@@ -652,7 +652,7 @@ class ShareManagerModal extends Modal {
       });
 
       actions
-        .createEl("button", { text: "澶嶅埗閾炬帴" })
+        .createEl("button", { text: "\u590d\u5236\u94fe\u63a5" })
         .addEventListener("click", async () => {
           await this.plugin.copyUrl(share.url, false);
           new Notice("\u5206\u4eab\u94fe\u63a5\u5df2\u590d\u5236");
@@ -662,7 +662,7 @@ class ShareManagerModal extends Modal {
         this.app.vault.getAbstractFileByPath(notePath);
       if (file instanceof TFile) {
         actions
-          .createEl("button", { text: "鏇存柊" })
+          .createEl("button", { text: "\u66f4\u65b0" })
           .addEventListener("click", () => {
             this.close();
             this.plugin.openShareOptions(file, "update");
@@ -671,7 +671,7 @@ class ShareManagerModal extends Modal {
 
       if (share.discussionEnabled) {
         actions
-          .createEl("button", { text: "瀹㈡埛閾炬帴" })
+          .createEl("button", { text: "\u5ba2\u6237\u94fe\u63a5" })
           .addEventListener("click", () => {
             new InviteManagerModal(
               this.app,
@@ -682,7 +682,7 @@ class ShareManagerModal extends Modal {
           });
 
         actions
-          .createEl("button", { text: "鏌ョ湅璁ㄨ" })
+          .createEl("button", { text: "\u67e5\u770b\u8ba8\u8bba" })
           .addEventListener("click", () => {
             new DiscussionModal(
               this.app,
@@ -695,7 +695,7 @@ class ShareManagerModal extends Modal {
 
       actions
         .createEl("button", {
-          text: "鍙栨秷鍒嗕韩",
+          text: "\u53d6\u6d88\u5206\u4eab",
           cls: "mod-warning",
         })
         .addEventListener("click", async () => {
@@ -728,7 +728,7 @@ class PrivateSharePlugin extends Plugin {
 
     this.addCommand({
       id: "share-current-note",
-      name: "鍒嗕韩褰撳墠绗旇",
+      name: "\u5206\u4eab\u5f53\u524d\u7b14\u8bb0",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
         if (
@@ -750,7 +750,7 @@ class PrivateSharePlugin extends Plugin {
 
     this.addCommand({
       id: "update-current-share",
-      name: "鏇存柊褰撳墠鍒嗕韩",
+      name: "\u66f4\u65b0\u5f53\u524d\u5206\u4eab",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
         if (
@@ -767,7 +767,7 @@ class PrivateSharePlugin extends Plugin {
 
     this.addCommand({
       id: "copy-current-share-link",
-      name: "澶嶅埗褰撳墠鍒嗕韩閾炬帴",
+      name: "\u590d\u5236\u5f53\u524d\u5206\u4eab\u94fe\u63a5",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
         if (
@@ -834,7 +834,7 @@ class PrivateSharePlugin extends Plugin {
 
     this.addCommand({
       id: "unshare-current-note",
-      name: "鍙栨秷褰撳墠鍒嗕韩",
+      name: "\u53d6\u6d88\u5f53\u524d\u5206\u4eab",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
         if (
@@ -914,7 +914,7 @@ class PrivateSharePlugin extends Plugin {
           if (existing && existing.url) {
             menu.addItem((item) =>
               item
-                .setTitle("澶嶅埗鍒嗕韩閾炬帴")
+                .setTitle("\u590d\u5236\u5206\u4eab\u94fe\u63a5")
                 .setIcon("copy")
                 .onClick(() =>
                   this.copyUrl(existing.url)
@@ -924,7 +924,7 @@ class PrivateSharePlugin extends Plugin {
             if (existing.discussionEnabled) {
               menu.addItem((item) =>
                 item
-                  .setTitle("瀹㈡埛涓撳睘閾炬帴")
+                  .setTitle("\u5ba2\u6237\u4e13\u5c5e\u94fe\u63a5")
                   .setIcon("users")
                   .onClick(() =>
                     new InviteManagerModal(
@@ -937,7 +937,7 @@ class PrivateSharePlugin extends Plugin {
               );
               menu.addItem((item) =>
                 item
-                  .setTitle("鏌ョ湅瀹㈡埛璁ㄨ")
+                  .setTitle("\u67e5\u770b\u5ba2\u6237\u8ba8\u8bba")
                   .setIcon("messages-square")
                   .onClick(() =>
                     new DiscussionModal(
@@ -952,7 +952,7 @@ class PrivateSharePlugin extends Plugin {
 
             menu.addItem((item) =>
               item
-                .setTitle("鍙栨秷鍒嗕韩")
+                .setTitle("\u53d6\u6d88\u5206\u4eab")
                 .setIcon("link-2-off")
                 .onClick(() =>
                   this.unshareFile(file)
@@ -991,7 +991,7 @@ class PrivateSharePlugin extends Plugin {
       return null;
     }
     if (!this.settings.apiToken) {
-      new Notice("璇峰厛濉啓 API Token");
+      new Notice("\u8bf7\u5148\u586b\u5199 API Token");
       return null;
     }
     return server;
@@ -1192,7 +1192,7 @@ class PrivateSharePlugin extends Plugin {
         );
       }
 
-      new Notice("姝ｅ湪鐢熸垚鍒嗕韩閾炬帴...");
+      new Notice("\u6b63\u5728\u751f\u6210\u5206\u4eab\u94fe\u63a5...");
       const data = await this.api(
         "/api/publish",
         "POST",
@@ -1239,7 +1239,7 @@ class PrivateSharePlugin extends Plugin {
       if (!existing)
         return this.shareFile(file, options);
 
-      new Notice("姝ｅ湪鏇存柊鍒嗕韩...");
+      new Notice("\u6b63\u5728\u66f4\u65b0\u5206\u4eab...");
       const data = await this.api(
         "/api/update/" +
           encodeURIComponent(
@@ -1357,7 +1357,7 @@ class PrivateSharePlugin extends Plugin {
       if (!existing) {
         if (showNotice)
           new Notice(
-            "杩欑瘒绗旇娌℃湁鍒嗕韩璁板綍"
+            "\u8fd9\u7bc7\u7b14\u8bb0\u6ca1\u6709\u5206\u4eab\u8bb0\u5f55"
           );
         return false;
       }
@@ -1414,7 +1414,7 @@ class PrivateShareSettingTab extends PluginSettingTab {
     new Setting(c)
       .setName("\u5206\u4eab\u670d\u52a1\u5668")
       .setDesc(
-        "渚嬪 https://share.example.com"
+        "\u4f8b\u5982 https://share.example.com"
       )
       .addText((text) =>
         text
@@ -1467,7 +1467,7 @@ class PrivateShareSettingTab extends PluginSettingTab {
       .setDesc("\u5171 " + count + " \u7bc7\u3002")
       .addButton((button) =>
         button
-          .setButtonText("绠＄悊鍒嗕韩")
+          .setButtonText("\u7ba1\u7406\u5206\u4eab")
           .onClick(() =>
             new ShareManagerModal(
               this.app,
