@@ -318,6 +318,20 @@ class InviteManagerModal extends Modal {
   async render() {
     const c = this.contentEl;
     c.empty();
+    try {
+      this.share = await this.plugin.resolveShareForPath(
+        this.notePath,
+        this.share
+      );
+    } catch (error) {
+      c.createEl("h2", { text: "\u5ba2\u6237\u4e13\u5c5e\u94fe\u63a5" });
+      c.createEl("p", {
+        text:
+          "\u8bfb\u53d6\u5206\u4eab\u4fe1\u606f\u5931\u8d25\uff1a" +
+          (error && error.message ? error.message : error),
+      });
+      return;
+    }
     c.createEl("h2", { text: "\u5ba2\u6237\u4e13\u5c5e\u94fe\u63a5" });
     c.createEl("p", {
       text: this.share.title || this.notePath,
@@ -453,6 +467,20 @@ class DiscussionModal extends Modal {
   async render() {
     const c = this.contentEl;
     c.empty();
+    try {
+      this.share = await this.plugin.resolveShareForPath(
+        this.notePath,
+        this.share
+      );
+    } catch (error) {
+      c.createEl("h2", { text: "\u5ba2\u6237\u786e\u8ba4 / \u8ba8\u8bba\u8bb0\u5f55" });
+      c.createEl("p", {
+        text:
+          "\u8bfb\u53d6\u5206\u4eab\u4fe1\u606f\u5931\u8d25\uff1a" +
+          (error && error.message ? error.message : error),
+      });
+      return;
+    }
     c.createEl("h2", { text: "\u5ba2\u6237\u786e\u8ba4 / \u8ba8\u8bba\u8bb0\u5f55" });
     c.createEl("p", {
       text: this.share.title || this.notePath,
@@ -1267,6 +1295,20 @@ class PrivateSharePlugin extends Plugin {
         8000
       );
     }
+  }
+
+  async resolveShareForPath(notePath, fallbackShare) {
+    const data = await this.api(
+      "/api/share/resolve?sourcePath=" +
+        encodeURIComponent(notePath),
+      "GET",
+      null,
+      null
+    );
+    return Object.assign({}, fallbackShare || {}, data, {
+      editToken:
+        (fallbackShare && fallbackShare.editToken) || "",
+    });
   }
 
   async createInvite(

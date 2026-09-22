@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.2
+
+- Fixed mobile discussion records not loading when local share metadata was stale
+- Mobile now resolves the authoritative share by note path before loading customer links or discussion
+- Improved cross-device reliability for customer discussion management
 ## 0.3.1
 
 - Fixed mobile/cross-device customer discussion menu visibility
