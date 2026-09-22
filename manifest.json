@@ -1,0 +1,9 @@
+{
+  "id": "private-share",
+  "name": "Private Share",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Share one note through a private random link.",
+  "author": "Local",
+  "isDesktopOnly": false
+}
