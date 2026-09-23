@@ -548,31 +548,57 @@ class DiscussionModal extends Modal {
         });
       }
 
+      const reviewState =
+        entry.reviewState || (entry.resolved ? "resolved" : "open");
+
+      const stateRow = row.createDiv({
+        cls: "private-share-manager-actions",
+      });
+      stateRow.createSpan({
+        text:
+          reviewState === "resolved"
+            ? "\u5df2\u89e3\u51b3"
+            : reviewState === "needs_changes"
+              ? "\u9700\u8981\u4fee\u6539"
+              : "\u672a\u89e3\u51b3",
+        cls: "private-share-badge",
+      });
+
       const actions = row.createDiv({
         cls: "private-share-manager-actions",
       });
-      actions
-        .createEl("button", {
-          text: entry.resolved ? "\u91cd\u65b0\u6253\u5f00" : "\u6807\u8bb0\u5df2\u89e3\u51b3",
-        })
-        .addEventListener("click", async () => {
-          try {
-            await this.plugin.setDiscussionResolved(
-              this.share,
-              entry.id,
-              !entry.resolved
-            );
-            await this.render();
-          } catch (error) {
-            new Notice(
-              "\u66f4\u65b0\u72b6\u6001\u5931\u8d25\uff1a" +
-                (error && error.message
-                  ? error.message
-                  : error),
-              8000
-            );
-          }
-        });
+
+      const addStateButton = (label, targetState) => {
+        actions
+          .createEl("button", { text: label })
+          .addEventListener("click", async () => {
+            try {
+              await this.plugin.setDiscussionReviewState(
+                this.share,
+                entry.id,
+                targetState
+              );
+              await this.render();
+            } catch (error) {
+              new Notice(
+                "\u66f4\u65b0\u72b6\u6001\u5931\u8d25\uff1a" +
+                  (error && error.message
+                    ? error.message
+                    : error),
+                8000
+              );
+            }
+          });
+      };
+
+      if (reviewState === "resolved") {
+        addStateButton("\u91cd\u65b0\u4fee\u6539", "needs_changes");
+      } else {
+        if (reviewState === "open") {
+          addStateButton("\u9700\u8981\u4fee\u6539", "needs_changes");
+        }
+        addStateButton("\u5df2\u89e3\u51b3", "resolved");
+      }
 
       const replies = entries.filter(
         (item) => item.parentId === entry.id
@@ -1362,10 +1388,10 @@ class PrivateSharePlugin extends Plugin {
     );
   }
 
-  async setDiscussionResolved(
+  async setDiscussionReviewState(
     share,
     entryId,
-    resolved
+    reviewState
   ) {
     return this.api(
       "/api/share/" +
@@ -1373,7 +1399,7 @@ class PrivateSharePlugin extends Plugin {
         "/discussion/" +
         encodeURIComponent(entryId),
       "PATCH",
-      { resolved },
+      { reviewState },
       share.editToken
     );
   }

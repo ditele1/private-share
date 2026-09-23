@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.3
+
+- Added three-state discussion management in Obsidian
+- Discussion records now show Unresolved, Needs changes, or Resolved
+- Added Needs changes and Resolved quick actions
+- Renamed Reopen to Modify again
 ## 0.3.2
 
 - Fixed mobile discussion records not loading when local share metadata was stale
