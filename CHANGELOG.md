@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.4
+
+- Switched attachments to direct binary uploads instead of Base64 JSON
+- Raised the per-attachment upload limit to 80 MB
+- Fixed large PDF sharing failures such as ERR_HTTP2_PROTOCOL_ERROR
+- Kept legacy attachment payload compatibility on the server
 ## 0.3.3
 
 - Added three-state discussion management in Obsidian

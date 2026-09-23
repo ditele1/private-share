@@ -1062,6 +1062,7 @@ class PrivateSharePlugin extends Plugin {
   async preparePayload(file, options, existing) {
     let markdown = await this.app.vault.read(file);
     const attachments = [];
+    const uploads = [];
     let assetIndex = 0;
 
     const re =
@@ -1088,8 +1089,6 @@ class PrivateSharePlugin extends Plugin {
         : "";
       const key =
         "asset-" + ++assetIndex + ext;
-      const binary =
-        await this.app.vault.readBinary(target);
       const label = alias || target.name;
       const replacement = isImageName(
         target.name
@@ -1113,8 +1112,12 @@ class PrivateSharePlugin extends Plugin {
         key,
         name: target.name,
         mime: mimeFromName(target.name),
-        dataBase64:
-          arrayBufferToBase64(binary),
+      });
+      uploads.push({
+        key,
+        path: target.path,
+        name: target.name,
+        mime: mimeFromName(target.name),
       });
     }
 
@@ -1145,7 +1148,7 @@ class PrivateSharePlugin extends Plugin {
         computeExpiry(payloadOptions.expiryMode);
     }
 
-    return {
+    const payload = {
       title: file.basename,
       sourcePath: file.path,
       markdown,
@@ -1162,6 +1165,72 @@ class PrivateSharePlugin extends Plugin {
             : null,
       },
     };
+    return { payload, uploads };
+  }
+
+  async uploadAttachments(shareId, editToken, uploads) {
+    if (!uploads || !uploads.length) return;
+    const server = this.validateSettings();
+    if (!server) throw new Error("missing settings");
+
+    for (let i = 0; i < uploads.length; i++) {
+      const item = uploads[i];
+      const file =
+        this.app.vault.getAbstractFileByPath(item.path);
+      if (!(file instanceof TFile)) {
+        throw new Error(
+          "attachment not found: " + item.name
+        );
+      }
+
+      const binary =
+        await this.app.vault.readBinary(file);
+      if (binary.byteLength > 80 * 1024 * 1024) {
+        throw new Error(
+          "attachment too large: " +
+            item.name +
+            " (max 80 MB)"
+        );
+      }
+
+      new Notice(
+        "\u6b63\u5728\u4e0a\u4f20\u9644\u4ef6 " +
+          (i + 1) + "/" + uploads.length +
+          "\uff1a" + item.name
+      );
+
+      const response = await requestUrl({
+        url:
+          server +
+          "/api/share/" +
+          encodeURIComponent(shareId) +
+          "/assets/" +
+          encodeURIComponent(item.key),
+        method: "PUT",
+        headers: {
+          Authorization:
+            "Bearer " + this.settings.apiToken,
+          "X-Edit-Token": editToken,
+          "Content-Type": "application/octet-stream",
+        },
+        body: binary,
+        throw: false,
+      });
+
+      if (response.status < 200 || response.status >= 300) {
+        let message = "HTTP " + response.status;
+        try {
+          const data =
+            response.json ||
+            JSON.parse(response.text || "{}");
+          if (data && data.error) message = data.error;
+        } catch (_) {}
+        throw new Error(
+          "\u9644\u4ef6\u4e0a\u4f20\u5931\u8d25\uff1a" +
+            item.name + " \u00b7 " + message
+        );
+      }
+    }
   }
 
   async api(
@@ -1236,15 +1305,36 @@ class PrivateSharePlugin extends Plugin {
       }
 
       new Notice("\u6b63\u5728\u751f\u6210\u5206\u4eab\u94fe\u63a5...");
-      const data = await this.api(
-        "/api/publish",
-        "POST",
+      const prepared =
         await this.preparePayload(
           file,
           options,
           null
-        )
+        );
+      const data = await this.api(
+        "/api/publish",
+        "POST",
+        prepared.payload
       );
+
+      try {
+        await this.uploadAttachments(
+          data.shareId,
+          data.editToken,
+          prepared.uploads
+        );
+      } catch (error) {
+        try {
+          await this.api(
+            "/api/unpublish/" +
+              encodeURIComponent(data.shareId),
+            "DELETE",
+            null,
+            data.editToken
+          );
+        } catch (_) {}
+        throw error;
+      }
 
       this.settings.shares[file.path] = {
         shareId: data.shareId,
@@ -1283,18 +1373,26 @@ class PrivateSharePlugin extends Plugin {
         return this.shareFile(file, options);
 
       new Notice("\u6b63\u5728\u66f4\u65b0\u5206\u4eab...");
+      const prepared =
+        await this.preparePayload(
+          file,
+          options,
+          existing
+        );
       const data = await this.api(
         "/api/update/" +
           encodeURIComponent(
             existing.shareId
           ),
         "PUT",
-        await this.preparePayload(
-          file,
-          options,
-          existing
-        ),
+        prepared.payload,
         existing.editToken
+      );
+
+      await this.uploadAttachments(
+        existing.shareId,
+        existing.editToken,
+        prepared.uploads
       );
 
       if (data.url) existing.url = data.url;
