@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.8
+
+- Switched large attachment chunks from binary HTTP bodies to small Base64 JSON chunks
+- Reduced chunk size to 512 KB for better stability through Obsidian and Cloudflare Tunnel
+- Kept resumable upload status checks, timeout handling, and automatic retries
+- Avoids repeated HTTP/2 binary transport failures observed during large PDF sharing
 ## 0.3.7
 
 - Reduced attachment chunks from 4 MB to 1 MB

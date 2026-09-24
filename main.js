@@ -1185,7 +1185,7 @@ class PrivateSharePlugin extends Plugin {
     const server = this.validateSettings();
     if (!server) throw new Error("missing settings");
 
-    const chunkSize = 1 * 1024 * 1024;
+    const chunkSize = 512 * 1024;
     const chunkTimeoutMs = 20000;
     const statusTimeoutMs = 10000;
     const maxRetries = 3;
@@ -1228,7 +1228,6 @@ class PrivateSharePlugin extends Plugin {
       if (response.status < 200 || response.status >= 300) {
         return null;
       }
-
       try {
         return (
           response.json ||
@@ -1252,7 +1251,6 @@ class PrivateSharePlugin extends Plugin {
       const binary =
         await this.app.vault.readBinary(file);
       const total = binary.byteLength;
-
       if (total > 80 * 1024 * 1024) {
         throw new Error(
           "attachment too large: " +
@@ -1284,7 +1282,7 @@ class PrivateSharePlugin extends Plugin {
             " " +
             percent +
             "%",
-          3000
+          2500
         );
 
         try {
@@ -1301,12 +1299,13 @@ class PrivateSharePlugin extends Plugin {
                 Authorization:
                   "Bearer " + this.settings.apiToken,
                 "X-Edit-Token": editToken,
-                "X-Upload-Offset": String(offset),
-                "X-Upload-Total": String(total),
-                "Content-Type":
-                  "application/octet-stream",
+                "Content-Type": "application/json",
               },
-              body: chunk,
+              body: JSON.stringify({
+                offset,
+                total,
+                dataBase64: arrayBufferToBase64(chunk),
+              }),
               throw: false,
             }),
             chunkTimeoutMs
