@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.9
+
+- Added a dedicated LAN upload URL for attachments
+- Large attachments upload directly to OpenWrt over the local network when available
+- LAN uploads use the original binary file without Base64 or Cloudflare Tunnel
+- Public HTTPS sharing remains unchanged
+- Automatic fallback keeps the public resumable uploader when LAN upload is unavailable
+- Normal and customer share links remain short-link compatible
 ## 0.3.8
 
 - Switched large attachment chunks from binary HTTP bodies to small Base64 JSON chunks

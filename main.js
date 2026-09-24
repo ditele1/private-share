@@ -11,6 +11,7 @@ const {
 
 const DEFAULT_SETTINGS = {
   serverUrl: "",
+  localUploadUrl: "",
   apiToken: "",
   shares: {},
 };
@@ -1185,7 +1186,7 @@ class PrivateSharePlugin extends Plugin {
     const server = this.validateSettings();
     if (!server) throw new Error("missing settings");
 
-    const chunkSize = 512 * 1024;
+    const maxChunks = 2;
     const chunkTimeoutMs = 20000;
     const statusTimeoutMs = 10000;
     const maxRetries = 3;
@@ -1264,6 +1265,73 @@ class PrivateSharePlugin extends Plugin {
         );
       }
 
+      const localUploadServer = normalizeBase(
+        this.settings.localUploadUrl || ""
+      );
+
+      if (localUploadServer) {
+        try {
+          new Notice(
+            "\u6b63\u5728\u901a\u8fc7\u5c40\u57df\u7f51\u4e0a\u4f20\u9644\u4ef6\uff1a" +
+              item.name,
+            3500
+          );
+
+          const lanResponse = await withTimeout(
+            requestUrl({
+              url:
+                localUploadServer +
+                "/api/share/" +
+                encodeURIComponent(shareId) +
+                "/assets/" +
+                encodeURIComponent(item.key) +
+                "/raw",
+              method: "PUT",
+              headers: {
+                Authorization:
+                  "Bearer " + this.settings.apiToken,
+                "X-Edit-Token": editToken,
+                "Content-Type":
+                  "application/octet-stream",
+              },
+              body: binary,
+              throw: false,
+            }),
+            90000
+          );
+
+          if (
+            lanResponse.status >= 200 &&
+            lanResponse.status < 300
+          ) {
+            new Notice(
+              "\u9644\u4ef6\u5c40\u57df\u7f51\u4e0a\u4f20\u5b8c\u6210\uff1a" +
+                item.name,
+              3000
+            );
+            continue;
+          }
+
+          let lanMessage = "HTTP " + lanResponse.status;
+          try {
+            const lanData =
+              lanResponse.json ||
+              JSON.parse(lanResponse.text || "{}");
+            if (lanData && lanData.error) {
+              lanMessage = lanData.error;
+            }
+          } catch (_) {}
+          throw new Error(lanMessage);
+        } catch (error) {
+          new Notice(
+            "\u5c40\u57df\u7f51\u4e0a\u4f20\u5931\u8d25\uff0c\u6b63\u5728\u5207\u6362\u516c\u7f51\u4e0a\u4f20\uff1a" +
+              item.name,
+            4500
+          );
+        }
+      }
+
+      const chunkSize = Math.ceil(total / maxChunks);
       let offset = 0;
       let retries = 0;
 
@@ -1761,6 +1829,29 @@ class PrivateShareSettingTab extends PluginSettingTab {
           )
           .onChange(async (value) => {
             this.plugin.settings.serverUrl =
+              value.trim();
+            await this.plugin.saveData(
+              this.plugin.settings
+            );
+          })
+      );
+
+    new Setting(c)
+      .setName("\u5c40\u57df\u7f51\u4e0a\u4f20\u5730\u5740")
+      .setDesc(
+        "\u53ef\u9009\u3002\u5728\u5bb6\u91cc\u65f6\u9644\u4ef6\u4f18\u5148\u76f4\u4f20 OpenWrt\uff0c\u5931\u8d25\u65f6\u81ea\u52a8\u56de\u9000\u516c\u7f51\u4e0a\u4f20"
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder(
+            "http://192.168.x.x:8090"
+          )
+          .setValue(
+            this.plugin.settings.localUploadUrl ||
+              ""
+          )
+          .onChange(async (value) => {
+            this.plugin.settings.localUploadUrl =
               value.trim();
             await this.plugin.saveData(
               this.plugin.settings
