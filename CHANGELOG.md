@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.6
+
+- Changed large attachment uploads to 4 MB chunks
+- Added upload progress percentages for PDF and other attachments
+- Server writes chunks to temporary .part files and finalizes atomically
+- Avoids large single HTTP/2 uploads that could stall behind Cloudflare Tunnel
 ## 0.3.5
 
 - Added short URLs for normal note shares

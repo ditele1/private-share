@@ -1185,6 +1185,8 @@ class PrivateSharePlugin extends Plugin {
     const server = this.validateSettings();
     if (!server) throw new Error("missing settings");
 
+    const chunkSize = 4 * 1024 * 1024;
+
     for (let i = 0; i < uploads.length; i++) {
       const item = uploads[i];
       const file =
@@ -1197,7 +1199,9 @@ class PrivateSharePlugin extends Plugin {
 
       const binary =
         await this.app.vault.readBinary(file);
-      if (binary.byteLength > 80 * 1024 * 1024) {
+      const total = binary.byteLength;
+
+      if (total > 80 * 1024 * 1024) {
         throw new Error(
           "attachment too large: " +
             item.name +
@@ -1205,42 +1209,67 @@ class PrivateSharePlugin extends Plugin {
         );
       }
 
-      new Notice(
-        "\u6b63\u5728\u4e0a\u4f20\u9644\u4ef6 " +
-          (i + 1) + "/" + uploads.length +
-          "\uff1a" + item.name
-      );
-
-      const response = await requestUrl({
-        url:
-          server +
-          "/api/share/" +
-          encodeURIComponent(shareId) +
-          "/assets/" +
-          encodeURIComponent(item.key),
-        method: "PUT",
-        headers: {
-          Authorization:
-            "Bearer " + this.settings.apiToken,
-          "X-Edit-Token": editToken,
-          "Content-Type": "application/octet-stream",
-        },
-        body: binary,
-        throw: false,
-      });
-
-      if (response.status < 200 || response.status >= 300) {
-        let message = "HTTP " + response.status;
-        try {
-          const data =
-            response.json ||
-            JSON.parse(response.text || "{}");
-          if (data && data.error) message = data.error;
-        } catch (_) {}
+      if (total === 0) {
         throw new Error(
-          "\u9644\u4ef6\u4e0a\u4f20\u5931\u8d25\uff1a" +
-            item.name + " \u00b7 " + message
+          "attachment is empty: " + item.name
         );
+      }
+
+      for (let offset = 0; offset < total; offset += chunkSize) {
+        const end = Math.min(offset + chunkSize, total);
+        const chunk = binary.slice(offset, end);
+        const percent = Math.round((end / total) * 100);
+
+        new Notice(
+          "\u6b63\u5728\u4e0a\u4f20\u9644\u4ef6 " +
+            (i + 1) +
+            "/" +
+            uploads.length +
+            "\uff1a" +
+            item.name +
+            " " +
+            percent +
+            "%",
+          3500
+        );
+
+        const response = await requestUrl({
+          url:
+            server +
+            "/api/share/" +
+            encodeURIComponent(shareId) +
+            "/assets/" +
+            encodeURIComponent(item.key),
+          method: "PUT",
+          headers: {
+            Authorization:
+              "Bearer " + this.settings.apiToken,
+            "X-Edit-Token": editToken,
+            "X-Upload-Offset": String(offset),
+            "X-Upload-Total": String(total),
+            "Content-Type": "application/octet-stream",
+          },
+          body: chunk,
+          throw: false,
+        });
+
+        if (response.status < 200 || response.status >= 300) {
+          let message = "HTTP " + response.status;
+          try {
+            const data =
+              response.json ||
+              JSON.parse(response.text || "{}");
+            if (data && data.error) message = data.error;
+          } catch (_) {}
+          throw new Error(
+            "\u9644\u4ef6\u4e0a\u4f20\u5931\u8d25\uff1a" +
+              item.name +
+              " \u00b7 " +
+              percent +
+              "% \u00b7 " +
+              message
+          );
+        }
       }
     }
   }
