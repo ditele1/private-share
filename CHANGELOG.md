@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.5
+
+- Added short URLs for normal note shares
+- New and updated shares now use /p/<short-code>
+- Copy Share Link refreshes old share URLs and copies the short form
+- Legacy /s/<share-id> URLs remain compatible
 ## 0.3.4
 
 - Switched attachments to direct binary uploads instead of Base64 JSON

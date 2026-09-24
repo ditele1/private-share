@@ -700,7 +700,11 @@ class ShareManagerModal extends Modal {
       actions
         .createEl("button", { text: "\u590d\u5236\u94fe\u63a5" })
         .addEventListener("click", async () => {
-          await this.plugin.copyUrl(share.url, false);
+          await this.plugin.copyResolvedShareUrl(
+            notePath,
+            share,
+            false
+          );
           new Notice("\u5206\u4eab\u94fe\u63a5\u5df2\u590d\u5236");
         });
 
@@ -822,7 +826,12 @@ class PrivateSharePlugin extends Plugin {
           return false;
         const share = this.settings.shares[file.path];
         if (!share || !share.url) return false;
-        if (!checking) this.copyUrl(share.url);
+        if (!checking) {
+          this.copyResolvedShareUrl(
+            file.path,
+            share
+          );
+        }
         return true;
       },
     });
@@ -962,7 +971,10 @@ class PrivateSharePlugin extends Plugin {
                 .setTitle("\u590d\u5236\u5206\u4eab\u94fe\u63a5")
                 .setIcon("copy")
                 .onClick(() =>
-                  this.copyUrl(existing.url)
+                  this.copyResolvedShareUrl(
+                    file.path,
+                    existing
+                  )
                 )
             );
 
@@ -1419,6 +1431,24 @@ class PrivateSharePlugin extends Plugin {
         8000
       );
     }
+  }
+
+  async copyResolvedShareUrl(notePath, share, showNotice = true) {
+    const resolved = await this.resolveShareForPath(
+      notePath,
+      share
+    );
+    const stored = this.settings.shares[notePath];
+    if (stored && resolved.url) {
+      stored.url = resolved.url;
+      stored.shareId = resolved.shareId || stored.shareId;
+      await this.saveData(this.settings);
+    }
+    await this.copyUrl(
+      resolved.url || (share && share.url) || "",
+      showNotice
+    );
+    return resolved.url || (share && share.url) || "";
   }
 
   async resolveShareForPath(notePath, fallbackShare) {
