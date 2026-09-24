@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.7
+
+- Reduced attachment chunks from 4 MB to 1 MB
+- Added per-chunk timeout and automatic retries
+- Added upload-status checks for resumable uploads
+- Repeated chunks are idempotent and overwrite at the same offset
+- Large PDF uploads no longer stay stuck indefinitely at one percentage
 ## 0.3.6
 
 - Changed large attachment uploads to 4 MB chunks

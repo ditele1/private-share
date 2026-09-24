@@ -1185,7 +1185,59 @@ class PrivateSharePlugin extends Plugin {
     const server = this.validateSettings();
     if (!server) throw new Error("missing settings");
 
-    const chunkSize = 4 * 1024 * 1024;
+    const chunkSize = 1 * 1024 * 1024;
+    const chunkTimeoutMs = 20000;
+    const statusTimeoutMs = 10000;
+    const maxRetries = 3;
+
+    const sleep = (ms) =>
+      new Promise((resolve) => setTimeout(resolve, ms));
+
+    const withTimeout = (promise, ms) =>
+      Promise.race([
+        promise,
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error("upload timeout")),
+            ms
+          )
+        ),
+      ]);
+
+    const getUploadStatus = async (item) => {
+      const response = await withTimeout(
+        requestUrl({
+          url:
+            server +
+            "/api/share/" +
+            encodeURIComponent(shareId) +
+            "/assets/" +
+            encodeURIComponent(item.key) +
+            "/upload-status",
+          method: "GET",
+          headers: {
+            Authorization:
+              "Bearer " + this.settings.apiToken,
+            "X-Edit-Token": editToken,
+          },
+          throw: false,
+        }),
+        statusTimeoutMs
+      );
+
+      if (response.status < 200 || response.status >= 300) {
+        return null;
+      }
+
+      try {
+        return (
+          response.json ||
+          JSON.parse(response.text || "{}")
+        );
+      } catch (_) {
+        return null;
+      }
+    };
 
     for (let i = 0; i < uploads.length; i++) {
       const item = uploads[i];
@@ -1208,14 +1260,16 @@ class PrivateSharePlugin extends Plugin {
             " (max 80 MB)"
         );
       }
-
       if (total === 0) {
         throw new Error(
           "attachment is empty: " + item.name
         );
       }
 
-      for (let offset = 0; offset < total; offset += chunkSize) {
+      let offset = 0;
+      let retries = 0;
+
+      while (offset < total) {
         const end = Math.min(offset + chunkSize, total);
         const chunk = binary.slice(offset, end);
         const percent = Math.round((end / total) * 100);
@@ -1230,45 +1284,112 @@ class PrivateSharePlugin extends Plugin {
             " " +
             percent +
             "%",
-          3500
+          3000
         );
 
-        const response = await requestUrl({
-          url:
-            server +
-            "/api/share/" +
-            encodeURIComponent(shareId) +
-            "/assets/" +
-            encodeURIComponent(item.key),
-          method: "PUT",
-          headers: {
-            Authorization:
-              "Bearer " + this.settings.apiToken,
-            "X-Edit-Token": editToken,
-            "X-Upload-Offset": String(offset),
-            "X-Upload-Total": String(total),
-            "Content-Type": "application/octet-stream",
-          },
-          body: chunk,
-          throw: false,
-        });
+        try {
+          const response = await withTimeout(
+            requestUrl({
+              url:
+                server +
+                "/api/share/" +
+                encodeURIComponent(shareId) +
+                "/assets/" +
+                encodeURIComponent(item.key),
+              method: "PUT",
+              headers: {
+                Authorization:
+                  "Bearer " + this.settings.apiToken,
+                "X-Edit-Token": editToken,
+                "X-Upload-Offset": String(offset),
+                "X-Upload-Total": String(total),
+                "Content-Type":
+                  "application/octet-stream",
+              },
+              body: chunk,
+              throw: false,
+            }),
+            chunkTimeoutMs
+          );
 
-        if (response.status < 200 || response.status >= 300) {
-          let message = "HTTP " + response.status;
+          let data = {};
           try {
-            const data =
+            data =
               response.json ||
               JSON.parse(response.text || "{}");
-            if (data && data.error) message = data.error;
           } catch (_) {}
+
+          if (response.status >= 200 && response.status < 300) {
+            const received = Number(data.received);
+            offset =
+              Number.isSafeInteger(received) && received > offset
+                ? Math.min(received, total)
+                : end;
+            retries = 0;
+            continue;
+          }
+
+          if (response.status === 409) {
+            const expected = Number(data.expectedOffset);
+            if (Number.isSafeInteger(expected) && expected >= 0) {
+              offset = Math.min(expected, total);
+              retries = 0;
+              continue;
+            }
+          }
+
           throw new Error(
-            "\u9644\u4ef6\u4e0a\u4f20\u5931\u8d25\uff1a" +
-              item.name +
-              " \u00b7 " +
-              percent +
-              "% \u00b7 " +
-              message
+            data.error || "HTTP " + response.status
           );
+        } catch (error) {
+          retries += 1;
+
+          let status = null;
+          try {
+            status = await getUploadStatus(item);
+          } catch (_) {}
+
+          if (status) {
+            const received = Number(status.received);
+            if (status.complete && received >= total) {
+              offset = total;
+              retries = 0;
+              continue;
+            }
+            if (
+              Number.isSafeInteger(received) &&
+              received > offset &&
+              received <= total
+            ) {
+              offset = received;
+              retries = 0;
+              continue;
+            }
+          }
+
+          if (retries >= maxRetries) {
+            throw new Error(
+              "\u9644\u4ef6\u4e0a\u4f20\u5931\u8d25\uff1a" +
+                item.name +
+                " \u00b7 " +
+                percent +
+                "% \u00b7 " +
+                (error && error.message
+                  ? error.message
+                  : error)
+            );
+          }
+
+          new Notice(
+            "\u4e0a\u4f20\u4e2d\u65ad\uff0c\u6b63\u5728\u81ea\u52a8\u91cd\u8bd5 " +
+              retries +
+              "/" +
+              maxRetries +
+              "\uff1a" +
+              item.name,
+            3500
+          );
+          await sleep(1000 * retries);
         }
       }
     }
