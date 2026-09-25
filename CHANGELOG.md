@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.3
+
+- Added Cloudflare Worker + R2 direct media delivery support
+- New attachments can use a custom Cloudflare media domain instead of routing file traffic through the home Private Share server
+- Preserved the existing /media proxy as a compatibility fallback for older links
+- Added remotePath to media-link generation so the server can map AList paths directly to R2 object keys
+- Video/audio/PDF and other large attachments can bypass the home uplink while retaining signed URLs and Range support
 ## 0.5.2
 
 - Added cross-device management-token synchronization for existing shares

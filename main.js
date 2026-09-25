@@ -1350,7 +1350,7 @@ class PrivateSharePlugin extends Plugin {
     return url;
   }
 
-  async getMediaProxyUrl(upstreamUrl) {
+  async getMediaProxyUrl(upstreamUrl, remotePath = "") {
     const server = normalizeBase(this.settings.serverUrl);
     const token = String(this.settings.apiToken || "").trim();
     if (!server || !token) return "";
