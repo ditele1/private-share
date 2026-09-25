@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.4
+
+- Fixed media-link requests so the AList remote path is actually sent to the Private Share server
+- Fixed attachment upload flow so new links can use the configured Cloudflare/R2 edge media domain instead of always falling back to the legacy /media proxy
 ## 0.5.3
 
 - Added Cloudflare Worker + R2 direct media delivery support

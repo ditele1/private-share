@@ -1364,6 +1364,7 @@ class PrivateSharePlugin extends Plugin {
       },
       body: JSON.stringify({
         url: upstreamUrl,
+        remotePath,
       }),
       throw: false,
     });
@@ -1633,7 +1634,8 @@ class PrivateSharePlugin extends Plugin {
       sign
     );
     const publicUrl = await this.getMediaProxyUrl(
-      upstreamUrl
+      upstreamUrl,
+      remotePath
     );
 
     return {
