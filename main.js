@@ -13,6 +13,17 @@ const DEFAULT_SETTINGS = {
   serverUrl: "",
   localUploadUrl: "",
   apiToken: "",
+  alistLanUrl: "",
+  alistPublicUrl: "",
+  alistUsername: "",
+  alistPassword: "",
+  alistToken: "",
+  alistRootPath: "/Obsidian",
+  alistUseDateFolders: true,
+  alistAutoUpload: true,
+  alistDeleteRemoteOnNoteDelete: true,
+  alistConfirmRemoteDelete: true,
+  alistAssets: {},
   shares: {},
 };
 
@@ -28,6 +39,48 @@ function arrayBufferToBase64(buffer) {
 }
 function normalizeBase(url) {
   return (url || "").trim().replace(/\/+$/, "");
+}
+function normalizeRemotePath(value) {
+  let pathValue = String(value || "").trim().replace(/\\/g, "/");
+  if (!pathValue) return "/";
+  if (!pathValue.startsWith("/")) pathValue = "/" + pathValue;
+  return pathValue.replace(/\/+/g, "/").replace(/\/+$/, "") || "/";
+}
+function encodeUrlPath(value) {
+  return normalizeRemotePath(value)
+    .split("/")
+    .map((part, index) =>
+      index === 0 ? "" : encodeURIComponent(part)
+    )
+    .join("/");
+}
+function safeRemoteName(name) {
+  const value = String(name || "file").trim();
+  const dot = value.lastIndexOf(".");
+  const ext = dot > 0 ? value.slice(dot).toLowerCase() : "";
+  const stem = dot > 0 ? value.slice(0, dot) : value;
+  const cleaned = stem
+    .normalize("NFKC")
+    .replace(/[^\p{L}\p{N}._-]+/gu, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 72) || "file";
+  return cleaned + ext;
+}
+function uploadStamp() {
+  const d = new Date();
+  const two = (n) => String(n).padStart(2, "0");
+  return (
+    d.getFullYear() +
+    two(d.getMonth() + 1) +
+    two(d.getDate()) +
+    "-" +
+    two(d.getHours()) +
+    two(d.getMinutes()) +
+    two(d.getSeconds())
+  );
+}
+function randomShortId() {
+  return Math.random().toString(36).slice(2, 8);
 }
 function mimeFromName(name) {
   const ext = name.split(".").pop()?.toLowerCase() || "";
@@ -52,6 +105,55 @@ function mimeFromName(name) {
 }
 function isImageName(name) {
   return /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(name);
+}
+function isAudioName(name) {
+  return /\.(mp3|m4a|aac|wav|ogg|oga|flac)$/i.test(name);
+}
+function isVideoName(name) {
+  return /\.(mp4|webm|mov|m4v|ogv)$/i.test(name);
+}
+function isExcelName(name) {
+  return /\.(xlsx|xls)$/i.test(name);
+}
+function htmlAttr(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+function aListReplacement(
+  name,
+  label,
+  publicUrl,
+  embedded = false
+) {
+  const safeUrl = htmlAttr(publicUrl);
+  if (isImageName(name)) {
+    return "!" + "[" + (label || name) + "](" + publicUrl + ")";
+  }
+  if (isVideoName(name)) {
+    return (
+      '<video controls preload="metadata" playsinline style="width:100%;max-width:100%;height:auto" src="' +
+      safeUrl +
+      '"></video>'
+    );
+  }
+  if (isAudioName(name)) {
+    return (
+      '<audio controls preload="metadata" style="width:100%" src="' +
+      safeUrl +
+      '"></audio>'
+    );
+  }
+  return (
+    (embedded ? "!" : "") +
+    "[" +
+    (label || name) +
+    "](" +
+    publicUrl +
+    ")"
+  );
 }
 function computeExpiry(choice) {
   if (!choice || choice === "none" || choice === "keep") return null;
@@ -320,7 +422,7 @@ class InviteManagerModal extends Modal {
     const c = this.contentEl;
     c.empty();
     try {
-      this.share = await this.plugin.resolveShareForPath(
+      this.share = await this.plugin.claimManageShareForPath(
         this.notePath,
         this.share
       );
@@ -469,7 +571,7 @@ class DiscussionModal extends Modal {
     const c = this.contentEl;
     c.empty();
     try {
-      this.share = await this.plugin.resolveShareForPath(
+      this.share = await this.plugin.claimManageShareForPath(
         this.notePath,
         this.share
       );
@@ -771,6 +873,8 @@ class PrivateSharePlugin extends Plugin {
       await this.loadData()
     );
     if (!this.settings.shares) this.settings.shares = {};
+    this.alistAutoTimers = new Map();
+    this.alistAutoRunning = new Set();
 
     this.addSettingTab(
       new PrivateShareSettingTab(this.app, this)
@@ -805,8 +909,7 @@ class PrivateSharePlugin extends Plugin {
         const file = this.app.workspace.getActiveFile();
         if (
           !(file instanceof TFile) ||
-          file.extension !== "md" ||
-          !this.settings.shares[file.path]
+          file.extension !== "md"
         )
           return false;
         if (!checking)
@@ -825,8 +928,7 @@ class PrivateSharePlugin extends Plugin {
           file.extension !== "md"
         )
           return false;
-        const share = this.settings.shares[file.path];
-        if (!share || !share.url) return false;
+        const share = this.settings.shares[file.path] || {};
         if (!checking) {
           this.copyResolvedShareUrl(
             file.path,
@@ -847,9 +949,7 @@ class PrivateSharePlugin extends Plugin {
           file.extension !== "md"
         )
           return false;
-        const share = this.settings.shares[file.path];
-        if (!share)
-          return false;
+        const share = this.settings.shares[file.path] || {};
         if (!checking) {
           new InviteManagerModal(
             this.app,
@@ -872,9 +972,7 @@ class PrivateSharePlugin extends Plugin {
           file.extension !== "md"
         )
           return false;
-        const share = this.settings.shares[file.path];
-        if (!share)
-          return false;
+        const share = this.settings.shares[file.path] || {};
         if (!checking) {
           new DiscussionModal(
             this.app,
@@ -894,11 +992,27 @@ class PrivateSharePlugin extends Plugin {
         const file = this.app.workspace.getActiveFile();
         if (
           !(file instanceof TFile) ||
-          file.extension !== "md" ||
-          !this.settings.shares[file.path]
+          file.extension !== "md"
         )
           return false;
         if (!checking) this.unshareFile(file);
+        return true;
+      },
+    });
+
+    this.addCommand({
+      id: "upload-current-note-attachments-to-alist",
+      name: "\u4e0a\u4f20\u5f53\u524d\u7b14\u8bb0\u9644\u4ef6\u5230 AList",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (
+          !(file instanceof TFile) ||
+          file.extension !== "md"
+        )
+          return false;
+        if (!checking) {
+          this.uploadCurrentNoteAttachmentsToAList(file);
+        }
         return true;
       },
     });
@@ -1024,18 +1138,891 @@ class PrivateSharePlugin extends Plugin {
         "rename",
         async (file, oldPath) => {
           if (!(file instanceof TFile)) return;
+          let changed = false;
+
           const existing =
             this.settings.shares[oldPath];
-          if (!existing) return;
-          delete this.settings.shares[oldPath];
-          this.settings.shares[file.path] =
-            existing;
-          await this.saveData(this.settings);
+          if (existing) {
+            delete this.settings.shares[oldPath];
+            this.settings.shares[file.path] =
+              existing;
+            changed = true;
+          }
+
+          const assets =
+            this.settings.alistAssets &&
+            this.settings.alistAssets[oldPath];
+          if (assets) {
+            delete this.settings.alistAssets[oldPath];
+            this.settings.alistAssets[file.path] =
+              assets;
+            changed = true;
+          }
+
+          if (changed) {
+            await this.saveData(this.settings);
+          }
+        }
+      )
+    );
+
+    this.registerEvent(
+      this.app.vault.on(
+        "modify",
+        (file) => {
+          if (!(file instanceof TFile)) return;
+          if (file.extension !== "md") return;
+          if (this.settings.alistAutoUpload === false) return;
+          this.scheduleAListAutoUpload(file);
+        }
+      )
+    );
+
+    this.registerEvent(
+      this.app.vault.on(
+        "delete",
+        async (file) => {
+          if (!(file instanceof TFile)) return;
+          if (file.extension !== "md") return;
+          await this.handleDeletedNoteAListAssets(
+            file.path
+          );
         }
       )
     );
   }
+  scheduleAListAutoUpload(file) {
+    if (!(file instanceof TFile) || file.extension !== "md")
+      return;
 
+    const oldTimer = this.alistAutoTimers.get(file.path);
+    if (oldTimer) {
+      window.clearTimeout(oldTimer);
+    }
+
+    const timer = window.setTimeout(async () => {
+      this.alistAutoTimers.delete(file.path);
+      if (this.settings.alistAutoUpload === false) return;
+      if (this.alistAutoRunning.has(file.path)) {
+        this.scheduleAListAutoUpload(file);
+        return;
+      }
+
+      this.alistAutoRunning.add(file.path);
+      try {
+        await this.uploadCurrentNoteAttachmentsToAList(
+          file,
+          { automatic: true, silentNoop: true }
+        );
+      } finally {
+        this.alistAutoRunning.delete(file.path);
+      }
+    }, 2500);
+
+    this.alistAutoTimers.set(file.path, timer);
+  }
+
+  validateAListSettings(showNotice = true) {
+    const lan = normalizeBase(this.settings.alistLanUrl);
+    const publicBase = normalizeBase(
+      this.settings.alistPublicUrl
+    );
+    if (!lan) {
+      if (showNotice) {
+      new Notice(
+        "\u8bf7\u5148\u5728 Private Share \u8bbe\u7f6e\u4e2d\u586b\u5199 AList \u5c40\u57df\u7f51\u5730\u5740"
+      );
+      }
+      return null;
+    }
+    if (!publicBase) {
+      if (showNotice) {
+      new Notice(
+        "\u8bf7\u5148\u586b\u5199 AList \u516c\u7f51\u8bbf\u95ee\u5730\u5740"
+      );
+      }
+      return null;
+    }
+    if (
+      !this.settings.alistToken &&
+      !this.settings.alistUsername
+    ) {
+      if (showNotice) {
+      new Notice(
+        "\u8bf7\u586b\u5199 AList Token\uff0c\u6216\u586b\u5199\u7528\u6237\u540d\u548c\u5bc6\u7801"
+      );
+      }
+      return null;
+    }
+    return { lan, publicBase };
+  }
+
+  async getAListToken() {
+    const configured = String(
+      this.settings.alistToken || ""
+    ).trim();
+    if (configured) return configured;
+
+    const lan = normalizeBase(this.settings.alistLanUrl);
+    const username = String(
+      this.settings.alistUsername || ""
+    ).trim();
+    const password = String(
+      this.settings.alistPassword || ""
+    );
+    if (!lan || !username) {
+      throw new Error("AList credentials missing");
+    }
+
+    const response = await requestUrl({
+      url: lan + "/api/auth/login",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        username,
+        password,
+      }),
+      throw: false,
+    });
+
+    let data = {};
+    try {
+      data =
+        response.json ||
+        JSON.parse(response.text || "{}");
+    } catch (_) {}
+
+    const token =
+      data &&
+      data.data &&
+      typeof data.data.token === "string"
+        ? data.data.token
+        : "";
+
+    if (
+      response.status < 200 ||
+      response.status >= 300 ||
+      !token
+    ) {
+      throw new Error(
+        (data && (data.message || data.error)) ||
+          "AList login failed: HTTP " +
+            response.status
+      );
+    }
+    return token;
+  }
+
+  buildAListRemotePath(originalName) {
+    const root = normalizeRemotePath(
+      this.settings.alistRootPath || "/Obsidian"
+    );
+    const parts = [root];
+    if (this.settings.alistUseDateFolders !== false) {
+      const d = new Date();
+      parts.push(String(d.getFullYear()));
+      parts.push(
+        String(d.getMonth() + 1).padStart(2, "0")
+      );
+    }
+    const uniqueName =
+      uploadStamp() +
+      "-" +
+      randomShortId() +
+      "-" +
+      safeRemoteName(originalName);
+    return normalizeRemotePath(
+      parts.join("/") + "/" + uniqueName
+    );
+  }
+
+  buildAListPublicUrl(remotePath, sign = "") {
+    const publicBase = normalizeBase(
+      this.settings.alistPublicUrl
+    );
+    let url =
+      publicBase + "/d" + encodeUrlPath(remotePath);
+    if (sign) {
+      url += "?sign=" + encodeURIComponent(sign);
+    }
+    return url;
+  }
+
+  async getMediaProxyUrl(upstreamUrl) {
+    const server = normalizeBase(this.settings.serverUrl);
+    const token = String(this.settings.apiToken || "").trim();
+    if (!server || !token) return "";
+
+    const response = await requestUrl({
+      url: server + "/api/media-link",
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        url: upstreamUrl,
+      }),
+      throw: false,
+    });
+
+    let data = {};
+    try {
+      data =
+        response.json ||
+        JSON.parse(response.text || "{}");
+    } catch (_) {}
+
+    if (
+      response.status < 200 ||
+      response.status >= 300 ||
+      !data ||
+      typeof data.url !== "string" ||
+      !data.url
+    ) {
+      throw new Error(
+        (data && (data.error || data.message)) ||
+          "Private Share media proxy link failed"
+      );
+    }
+    return data.url;
+  }
+  async getAListFileSign(
+    remotePath,
+    token,
+    maxAttempts = 8
+  ) {
+    const lan = normalizeBase(this.settings.alistLanUrl);
+    const normalized = normalizeRemotePath(remotePath);
+    const slash = normalized.lastIndexOf("/");
+    const parentPath =
+      slash > 0 ? normalized.slice(0, slash) : "/";
+    const fileName = normalized.slice(slash + 1);
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const response = await requestUrl({
+          url: lan + "/api/fs/get",
+          method: "POST",
+          headers: {
+            Authorization: token,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            path: normalized,
+            password: "",
+          }),
+          throw: false,
+        });
+
+        let data = {};
+        try {
+          data =
+            response.json ||
+            JSON.parse(response.text || "{}");
+        } catch (_) {}
+
+        const sign =
+          data &&
+          data.data &&
+          typeof data.data.sign === "string"
+            ? data.data.sign
+            : "";
+
+        if (
+          response.status >= 200 &&
+          response.status < 300 &&
+          (!data.code || data.code === 200) &&
+          sign
+        ) {
+          return sign;
+        }
+
+        lastError = new Error(
+          (data && (data.message || data.error)) ||
+            "AList file info not ready"
+        );
+      } catch (error) {
+        lastError = error;
+      }
+
+      try {
+        const listResponse = await requestUrl({
+          url: lan + "/api/fs/list",
+          method: "POST",
+          headers: {
+            Authorization: token,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            path: parentPath,
+            password: "",
+            page: 1,
+            per_page: 200,
+            refresh: true,
+          }),
+          throw: false,
+        });
+
+        let listData = {};
+        try {
+          listData =
+            listResponse.json ||
+            JSON.parse(listResponse.text || "{}");
+        } catch (_) {}
+
+        const content =
+          listData &&
+          listData.data &&
+          Array.isArray(listData.data.content)
+            ? listData.data.content
+            : [];
+
+        const item = content.find(
+          (entry) =>
+            entry &&
+            entry.name === fileName &&
+            typeof entry.sign === "string" &&
+            entry.sign
+        );
+
+        if (item) {
+          return item.sign;
+        }
+
+        if (
+          listResponse.status < 200 ||
+          listResponse.status >= 300 ||
+          (listData.code && listData.code !== 200)
+        ) {
+          lastError = new Error(
+            (listData &&
+              (listData.message || listData.error)) ||
+              "AList directory refresh failed"
+          );
+        }
+      } catch (error) {
+        lastError = error;
+      }
+
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) =>
+          window.setTimeout(
+            resolve,
+            Math.min(500 * attempt, 2500)
+          )
+        );
+      }
+    }
+
+    throw (
+      lastError ||
+      new Error("AList file sign unavailable")
+    );
+  }
+  async ensureAListDirectory(remotePath, token) {
+    const lan = normalizeBase(this.settings.alistLanUrl);
+    const normalized = normalizeRemotePath(remotePath);
+    const parts = normalized.split("/").filter(Boolean);
+    if (parts.length <= 1) return;
+
+    // The first segment is normally the AList mount itself
+    // (for example /Obsidian), so only create folders below it.
+    let current = "/" + parts[0];
+    for (let i = 1; i < parts.length; i++) {
+      current += "/" + parts[i];
+      const response = await requestUrl({
+        url: lan + "/api/fs/mkdir",
+        method: "POST",
+        headers: {
+          Authorization: token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ path: current }),
+        throw: false,
+      });
+
+      let data = {};
+      try {
+        data =
+          response.json ||
+          JSON.parse(response.text || "{}");
+      } catch (_) {}
+
+      const message = String(
+        (data && (data.message || data.error)) || ""
+      );
+      const alreadyExists =
+        /exist|already|存在/i.test(message);
+      const ok =
+        (response.status >= 200 &&
+          response.status < 300 &&
+          (!data.code || data.code === 200)) ||
+        alreadyExists;
+
+      if (!ok) {
+        throw new Error(
+          message ||
+            "AList mkdir failed: HTTP " +
+              response.status
+        );
+      }
+    }
+  }
+
+  async uploadFileToAList(target, token) {
+    const settings = this.validateAListSettings();
+    if (!settings)
+      throw new Error("AList settings missing");
+
+    const binary = await this.app.vault.readBinary(target);
+    const remotePath = this.buildAListRemotePath(
+      target.name
+    );
+    const remoteDir = remotePath.slice(
+      0,
+      remotePath.lastIndexOf("/")
+    );
+    await this.ensureAListDirectory(remoteDir, token);
+
+    const response = await requestUrl({
+      url: settings.lan + "/api/fs/put",
+      method: "PUT",
+      headers: {
+        Authorization: token,
+        "File-Path": encodeURIComponent(remotePath),
+        "As-Task": "false",
+        "Content-Type":
+          mimeFromName(target.name) ||
+          "application/octet-stream",
+      },
+      body: binary,
+      throw: false,
+    });
+
+    let data = {};
+    try {
+      data =
+        response.json ||
+        JSON.parse(response.text || "{}");
+    } catch (_) {}
+
+    const ok =
+      response.status >= 200 &&
+      response.status < 300 &&
+      (!data.code || data.code === 200);
+
+    if (!ok) {
+      throw new Error(
+        (data && (data.message || data.error)) ||
+          "AList upload failed: HTTP " +
+            response.status
+      );
+    }
+
+    const sign = await this.getAListFileSign(
+      remotePath,
+      token
+    );
+
+    const upstreamUrl = this.buildAListPublicUrl(
+      remotePath,
+      sign
+    );
+    const publicUrl = await this.getMediaProxyUrl(
+      upstreamUrl
+    );
+
+    return {
+      remotePath,
+      publicUrl,
+      upstreamUrl,
+    };
+  }
+  async uploadCurrentNoteAttachmentsToAList(
+    file,
+    runOptions = {}
+  ) {
+    const automatic = !!runOptions.automatic;
+    const silentNoop = !!runOptions.silentNoop;
+    try {
+      const settings = this.validateAListSettings(!automatic);
+      if (!settings) return false;
+
+      let markdown = await this.app.vault.read(file);
+      const token = await this.getAListToken();
+      const replacements = [];
+      const seenTargets = new Map();
+
+      const wikiRe =
+        /!\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g;
+      for (const match of [...markdown.matchAll(wikiRe)]) {
+        const raw = match[1].trim();
+        const alias = (match[2] || "").trim();
+        const target =
+          this.app.metadataCache.getFirstLinkpathDest(
+            raw,
+            file.path
+          );
+        if (
+          !(target instanceof TFile) ||
+          target.extension === "md"
+        )
+          continue;
+
+        let uploaded = seenTargets.get(target.path);
+        if (!uploaded) {
+          if (!automatic) {
+          new Notice(
+            "\u6b63\u5728\u4e0a\u4f20\u5230 AList\uff1a" +
+              target.name,
+            2500
+          );
+          }
+          uploaded = await this.uploadFileToAList(
+            target,
+            token
+          );
+          seenTargets.set(target.path, uploaded);
+        }
+
+        const label = alias || target.name;
+        const replacement = aListReplacement(
+          target.name,
+          label,
+          uploaded.publicUrl,
+          isImageName(target.name)
+        );
+        replacements.push({
+          from: match[0],
+          to: replacement,
+        });
+      }
+
+      const mdRe =
+        /(!?)\[([^\]]*)\]\(([^)]+)\)/g;
+      for (const match of [...markdown.matchAll(mdRe)]) {
+        const rawTarget = String(match[3] || "").trim();
+        if (
+          /^(?:https?:|data:|app:|obsidian:|mailto:)/i.test(
+            rawTarget
+          )
+        )
+          continue;
+
+        const cleanTarget = rawTarget
+          .replace(/^<|>$/g, "")
+          .split("#")[0]
+          .trim();
+        let decoded = cleanTarget;
+        try {
+          decoded = decodeURIComponent(cleanTarget);
+        } catch (_) {}
+
+        const target =
+          this.app.metadataCache.getFirstLinkpathDest(
+            decoded,
+            file.path
+          );
+        if (
+          !(target instanceof TFile) ||
+          target.extension === "md"
+        )
+          continue;
+
+        let uploaded = seenTargets.get(target.path);
+        if (!uploaded) {
+          if (!automatic) {
+          new Notice(
+            "\u6b63\u5728\u4e0a\u4f20\u5230 AList\uff1a" +
+              target.name,
+            2500
+          );
+          }
+          uploaded = await this.uploadFileToAList(
+            target,
+            token
+          );
+          seenTargets.set(target.path, uploaded);
+        }
+
+        const embedded =
+          match[1] === "!" || isImageName(target.name);
+        const label = match[2] || target.name;
+        replacements.push({
+          from: match[0],
+          to: aListReplacement(
+            target.name,
+            label,
+            uploaded.publicUrl,
+            embedded
+          ),
+        });
+      }
+
+      if (!replacements.length) {
+        if (automatic) {
+          const attempt = Number(
+            runOptions.retryAttempt || 0
+          );
+          if (attempt < 3) {
+            await new Promise((resolve) =>
+              window.setTimeout(
+                resolve,
+                1000 + attempt * 750
+              )
+            );
+            return this.uploadCurrentNoteAttachmentsToAList(
+              file,
+              {
+                automatic: true,
+                silentNoop: true,
+                retryAttempt: attempt + 1,
+              }
+            );
+          }
+        }
+        if (!silentNoop) {
+          new Notice(
+            "\u5f53\u524d\u7b14\u8bb0\u6ca1\u6709\u627e\u5230\u53ef\u4e0a\u4f20\u7684\u672c\u5730\u9644\u4ef6"
+          );
+        }
+        return false;
+      }
+
+      for (const item of replacements) {
+        markdown = markdown.replace(item.from, item.to);
+      }
+
+      await this.app.vault.modify(file, markdown);
+      this.recordAListAssetsForNote(
+        file.path,
+        seenTargets
+      );
+      await this.saveData(this.settings);
+      new Notice(
+        (automatic
+          ? "\u5df2\u81ea\u52a8\u4e0a\u4f20 "
+          : "\u5df2\u4e0a\u4f20 ") +
+          seenTargets.size +
+          " \u4e2a\u9644\u4ef6\u5230 AList\uff0c\u5e76\u66ff\u6362\u4e3a\u516c\u7f51\u94fe\u63a5",
+        automatic ? 4500 : 7000
+      );
+      return true;
+    } catch (error) {
+      console.error(
+        "AList attachment upload failed",
+        error
+      );
+      new Notice(
+        (automatic ? "AList \u81ea\u52a8\u4e0a\u4f20\u5931\u8d25\uff1a" : "AList \u9644\u4ef6\u4e0a\u4f20\u5931\u8d25\uff1a") +
+          (error && error.message
+            ? error.message
+            : error),
+        9000
+      );
+      return false;
+    }
+  }
+
+  recordAListAssetsForNote(notePath, uploadedMap) {
+    if (!this.settings.alistAssets) {
+      this.settings.alistAssets = {};
+    }
+    const current = Array.isArray(
+      this.settings.alistAssets[notePath]
+    )
+      ? this.settings.alistAssets[notePath]
+      : [];
+    const byRemotePath = new Map(
+      current
+        .filter(
+          (item) =>
+            item &&
+            typeof item.remotePath === "string"
+        )
+        .map((item) => [item.remotePath, item])
+    );
+
+    for (const [localPath, uploaded] of uploadedMap) {
+      if (
+        !uploaded ||
+        typeof uploaded.remotePath !== "string"
+      )
+        continue;
+      byRemotePath.set(uploaded.remotePath, {
+        remotePath: uploaded.remotePath,
+        publicUrl: uploaded.publicUrl || "",
+        originalLocalPath: localPath || "",
+        uploadedAt: new Date().toISOString(),
+      });
+    }
+
+    this.settings.alistAssets[notePath] =
+      [...byRemotePath.values()];
+  }
+
+  async deleteAListRemoteAsset(remotePath, token) {
+    const lan = normalizeBase(this.settings.alistLanUrl);
+    const normalized = normalizeRemotePath(remotePath);
+    const slash = normalized.lastIndexOf("/");
+    const dir =
+      slash > 0 ? normalized.slice(0, slash) : "/";
+    const name = normalized.slice(slash + 1);
+    if (!name) {
+      throw new Error("invalid remote asset path");
+    }
+
+    const response = await requestUrl({
+      url: lan + "/api/fs/remove",
+      method: "POST",
+      headers: {
+        Authorization: token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        dir,
+        names: [name],
+      }),
+      throw: false,
+    });
+
+    let data = {};
+    try {
+      data =
+        response.json ||
+        JSON.parse(response.text || "{}");
+    } catch (_) {}
+
+    const ok =
+      response.status >= 200 &&
+      response.status < 300 &&
+      (!data.code || data.code === 200);
+    if (!ok) {
+      throw new Error(
+        (data && (data.message || data.error)) ||
+          "AList delete failed: HTTP " +
+            response.status
+      );
+    }
+  }
+
+  async handleDeletedNoteAListAssets(notePath) {
+    const assetMap = this.settings.alistAssets || {};
+    const assets = Array.isArray(assetMap[notePath])
+      ? assetMap[notePath]
+      : [];
+    if (!assets.length) return;
+
+    if (
+      this.settings.alistDeleteRemoteOnNoteDelete ===
+      false
+    ) {
+      return;
+    }
+
+    if (
+      this.settings.alistConfirmRemoteDelete !== false
+    ) {
+      const confirmed =
+        typeof window !== "undefined" &&
+        typeof window.confirm === "function"
+          ? window.confirm(
+              "\u5df2\u5220\u9664\u7b14\u8bb0\uff1a" +
+                notePath +
+                "\n\n\u662f\u5426\u540c\u65f6\u5220\u9664 " +
+                assets.length +
+                " \u4e2a AList / R2 \u8fdc\u7a0b\u9644\u4ef6\uff1f\n\n\u53ea\u4f1a\u5220\u9664 Private Share \u63d2\u4ef6\u81ea\u5df1\u4e0a\u4f20\u5e76\u8bb0\u5f55\u7684\u9644\u4ef6\u3002"
+            )
+          : false;
+      if (!confirmed) {
+        new Notice(
+          "\u5df2\u4fdd\u7559 AList / R2 \u8fdc\u7a0b\u9644\u4ef6"
+        );
+        return;
+      }
+    }
+
+    try {
+      const token = await this.getAListToken();
+      let deleted = 0;
+      const failed = [];
+
+      for (const asset of assets) {
+        if (
+          !asset ||
+          typeof asset.remotePath !== "string"
+        )
+          continue;
+        try {
+          await this.deleteAListRemoteAsset(
+            asset.remotePath,
+            token
+          );
+          deleted += 1;
+        } catch (error) {
+          failed.push({
+            remotePath: asset.remotePath,
+            error:
+              error && error.message
+                ? error.message
+                : String(error),
+          });
+        }
+      }
+
+      if (failed.length === 0) {
+        delete this.settings.alistAssets[notePath];
+        await this.saveData(this.settings);
+        new Notice(
+          "\u5df2\u540c\u6b65\u5220\u9664 " +
+            deleted +
+            " \u4e2a AList / R2 \u8fdc\u7a0b\u9644\u4ef6",
+          6000
+        );
+        return;
+      }
+
+      const failedPaths = new Set(
+        failed.map((item) => item.remotePath)
+      );
+      this.settings.alistAssets[notePath] =
+        assets.filter(
+          (asset) =>
+            asset &&
+            failedPaths.has(asset.remotePath)
+        );
+      await this.saveData(this.settings);
+
+      console.error(
+        "Some AList remote attachments failed to delete",
+        failed
+      );
+      new Notice(
+        "\u8fdc\u7a0b\u9644\u4ef6\u5220\u9664\u90e8\u5206\u5931\u8d25\uff1a\u5df2\u5220 " +
+          deleted +
+          "\uff0c\u5931\u8d25 " +
+          failed.length +
+          "\u3002\u5931\u8d25\u9879\u5df2\u4fdd\u7559\u5728\u672c\u5730\u8bb0\u5f55\u4e2d\u3002",
+        9000
+      );
+    } catch (error) {
+      console.error(
+        "AList remote cleanup failed",
+        error
+      );
+      new Notice(
+        "AList / R2 \u8fdc\u7a0b\u9644\u4ef6\u5220\u9664\u5931\u8d25\uff1a" +
+          (error && error.message
+            ? error.message
+            : error),
+        9000
+      );
+    }
+  }
   validateSettings() {
     const server = normalizeBase(
       this.settings.serverUrl
@@ -1522,15 +2509,21 @@ class PrivateSharePlugin extends Plugin {
     }
   }
 
-  async shareFile(file, options = {}) {
+  async shareFile(file, options = {}, runOptions = {}) {
     try {
-      const existing =
-        this.settings.shares[file.path];
-      if (existing) {
-        return await this.updateShare(
-          file,
-          options
+      if (!runOptions.skipClaim) {
+        const claimed = await this.claimManageShareForPath(
+          file.path,
+          this.settings.shares[file.path] || null,
+          true
         );
+        if (claimed) {
+          return await this.updateShare(
+            file,
+            options,
+            { skipClaim: true }
+          );
+        }
       }
 
       new Notice("\u6b63\u5728\u751f\u6210\u5206\u4eab\u94fe\u63a5...");
@@ -1594,12 +2587,28 @@ class PrivateSharePlugin extends Plugin {
     }
   }
 
-  async updateShare(file, options = {}) {
+  async updateShare(
+    file,
+    options = {},
+    runOptions = {}
+  ) {
     try {
-      const existing =
-        this.settings.shares[file.path];
-      if (!existing)
-        return this.shareFile(file, options);
+      let existing =
+        this.settings.shares[file.path] || null;
+      if (!runOptions.skipClaim) {
+        existing = await this.claimManageShareForPath(
+          file.path,
+          existing,
+          true
+        );
+      }
+      if (!existing) {
+        return this.shareFile(
+          file,
+          options,
+          { skipClaim: true }
+        );
+      }
 
       new Notice("\u6b63\u5728\u66f4\u65b0\u5206\u4eab...");
       const prepared =
@@ -1610,9 +2619,7 @@ class PrivateSharePlugin extends Plugin {
         );
       const data = await this.api(
         "/api/update/" +
-          encodeURIComponent(
-            existing.shareId
-          ),
+          encodeURIComponent(existing.shareId),
         "PUT",
         prepared.payload,
         existing.editToken
@@ -1649,7 +2656,6 @@ class PrivateSharePlugin extends Plugin {
       );
     }
   }
-
   async copyResolvedShareUrl(notePath, share, showNotice = true) {
     const resolved = await this.resolveShareForPath(
       notePath,
@@ -1668,6 +2674,44 @@ class PrivateSharePlugin extends Plugin {
     return resolved.url || (share && share.url) || "";
   }
 
+  async claimManageShareForPath(
+    notePath,
+    fallbackShare,
+    allowMissing = false
+  ) {
+    try {
+      const data = await this.api(
+        "/api/share/claim",
+        "POST",
+        { sourcePath: notePath },
+        null
+      );
+      const merged = Object.assign(
+        {},
+        fallbackShare || {},
+        data
+      );
+      this.settings.shares[notePath] = merged;
+      await this.saveData(this.settings);
+      return merged;
+    } catch (error) {
+      const message =
+        error && error.message
+          ? String(error.message)
+          : String(error || "");
+      if (
+        allowMissing &&
+        message.toLowerCase().includes("share not found")
+      ) {
+        if (this.settings.shares[notePath]) {
+          delete this.settings.shares[notePath];
+          await this.saveData(this.settings);
+        }
+        return null;
+      }
+      throw error;
+    }
+  }
   async resolveShareForPath(notePath, fallbackShare) {
     const data = await this.api(
       "/api/share/resolve?sourcePath=" +
@@ -1755,7 +2799,11 @@ class PrivateSharePlugin extends Plugin {
   ) {
     try {
       const existing =
-        this.settings.shares[notePath];
+        await this.claimManageShareForPath(
+          notePath,
+          this.settings.shares[notePath] || null,
+          true
+        );
       if (!existing) {
         if (showNotice)
           new Notice(
@@ -1794,7 +2842,6 @@ class PrivateSharePlugin extends Plugin {
       return false;
     }
   }
-
   async unshareFile(file) {
     return this.unshareByPath(
       file.path,
@@ -1883,6 +2930,206 @@ class PrivateShareSettingTab extends PluginSettingTab {
           });
       });
 
+    c.createEl("h3", {
+      text: "AList / R2 \u9644\u4ef6",
+    });
+
+    new Setting(c)
+      .setName("AList \u5c40\u57df\u7f51\u4e0a\u4f20\u5730\u5740")
+      .setDesc(
+        "\u4ec5\u7528\u4e8e\u4e0a\u4f20\uff0c\u4f8b\u5982 http://192.168.x.x:5244"
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("http://192.168.x.x:5244")
+          .setValue(
+            this.plugin.settings.alistLanUrl || ""
+          )
+          .onChange(async (value) => {
+            this.plugin.settings.alistLanUrl =
+              value.trim();
+            await this.plugin.saveData(
+              this.plugin.settings
+            );
+          })
+      );
+
+    new Setting(c)
+      .setName("AList \u516c\u7f51\u8bbf\u95ee\u5730\u5740")
+      .setDesc(
+        "\u5199\u56de\u7b14\u8bb0\u7684\u9644\u4ef6\u94fe\u63a5\u4f7f\u7528\u8fd9\u4e2a\u5730\u5740"
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("https://files.example.com")
+          .setValue(
+            this.plugin.settings.alistPublicUrl || ""
+          )
+          .onChange(async (value) => {
+            this.plugin.settings.alistPublicUrl =
+              value.trim();
+            await this.plugin.saveData(
+              this.plugin.settings
+            );
+          })
+      );
+
+    new Setting(c)
+      .setName("AList Token")
+      .setDesc(
+        "\u63a8\u8350\u3002\u5982\u679c\u586b\u5199 Token\uff0c\u5219\u4e0d\u4f7f\u7528\u4e0b\u9762\u7684\u7528\u6237\u540d\u548c\u5bc6\u7801\u767b\u5f55"
+      )
+      .addText((text) => {
+        text.inputEl.type = "password";
+        text
+          .setPlaceholder("AList token")
+          .setValue(
+            this.plugin.settings.alistToken || ""
+          )
+          .onChange(async (value) => {
+            this.plugin.settings.alistToken =
+              value.trim();
+            await this.plugin.saveData(
+              this.plugin.settings
+            );
+          });
+      });
+
+    new Setting(c)
+      .setName("AList \u7528\u6237\u540d")
+      .setDesc(
+        "\u4ec5\u5728\u672a\u586b\u5199 Token \u65f6\u4f7f\u7528"
+      )
+      .addText((text) =>
+        text
+          .setValue(
+            this.plugin.settings.alistUsername || ""
+          )
+          .onChange(async (value) => {
+            this.plugin.settings.alistUsername =
+              value.trim();
+            await this.plugin.saveData(
+              this.plugin.settings
+            );
+          })
+      );
+
+    new Setting(c)
+      .setName("AList \u5bc6\u7801")
+      .setDesc(
+        "\u4ec5\u5728\u672a\u586b\u5199 Token \u65f6\u4f7f\u7528"
+      )
+      .addText((text) => {
+        text.inputEl.type = "password";
+        text
+          .setValue(
+            this.plugin.settings.alistPassword || ""
+          )
+          .onChange(async (value) => {
+            this.plugin.settings.alistPassword =
+              value;
+            await this.plugin.saveData(
+              this.plugin.settings
+            );
+          });
+      });
+
+    new Setting(c)
+      .setName("\u8fdc\u7a0b\u6839\u76ee\u5f55")
+      .setDesc("\u4f8b\u5982 /Obsidian")
+      .addText((text) =>
+        text
+          .setPlaceholder("/Obsidian")
+          .setValue(
+            this.plugin.settings.alistRootPath ||
+              "/Obsidian"
+          )
+          .onChange(async (value) => {
+            this.plugin.settings.alistRootPath =
+              normalizeRemotePath(value || "/Obsidian");
+            await this.plugin.saveData(
+              this.plugin.settings
+            );
+          })
+      );
+
+    new Setting(c)
+      .setName("\u9644\u4ef6\u81ea\u52a8\u4e0a\u4f20\u5230 AList")
+      .setDesc(
+        "\u5f00\u542f\u540e\uff0c\u62d6\u5165\u6216\u7c98\u8d34\u672c\u5730\u9644\u4ef6\u5230\u7b14\u8bb0\u65f6\uff0c\u4f1a\u81ea\u52a8\u4e0a\u4f20\u5230 AList / R2 \u5e76\u66ff\u6362\u4e3a\u516c\u7f51\u94fe\u63a5"
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(
+            this.plugin.settings.alistAutoUpload !== false
+          )
+          .onChange(async (value) => {
+            this.plugin.settings.alistAutoUpload = value;
+            await this.plugin.saveData(
+              this.plugin.settings
+            );
+          })
+      );
+
+    new Setting(c)
+      .setName("\u6309\u5e74/\u6708\u81ea\u52a8\u5206\u76ee\u5f55")
+      .setDesc(
+        "\u5f00\u542f\u540e\u5c06\u4e0a\u4f20\u5230 /Obsidian/YYYY/MM/"
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(
+            this.plugin.settings.alistUseDateFolders !==
+              false
+          )
+          .onChange(async (value) => {
+            this.plugin.settings.alistUseDateFolders =
+              value;
+            await this.plugin.saveData(
+              this.plugin.settings
+            );
+          })
+      );
+
+    new Setting(c)
+      .setName("\u5220\u9664\u7b14\u8bb0\u65f6\u540c\u6b65\u5220\u9664 AList / R2 \u9644\u4ef6")
+      .setDesc(
+        "\u53ea\u5220\u9664\u7531\u672c\u63d2\u4ef6\u4e0a\u4f20\u5e76\u4e0e\u8be5\u7b14\u8bb0\u7ed1\u5b9a\u8bb0\u5f55\u7684\u8fdc\u7a0b\u9644\u4ef6"
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(
+            this.plugin.settings
+              .alistDeleteRemoteOnNoteDelete !== false
+          )
+          .onChange(async (value) => {
+            this.plugin.settings
+              .alistDeleteRemoteOnNoteDelete = value;
+            await this.plugin.saveData(
+              this.plugin.settings
+            );
+          })
+      );
+
+    new Setting(c)
+      .setName("\u5220\u9664\u8fdc\u7a0b\u9644\u4ef6\u524d\u786e\u8ba4")
+      .setDesc(
+        "\u5efa\u8bae\u4fdd\u6301\u5f00\u542f\uff1b\u5220\u9664\u7b14\u8bb0\u540e\u4f1a\u518d\u8be2\u95ee\u662f\u5426\u5220\u9664 AList / R2 \u9644\u4ef6"
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(
+            this.plugin.settings
+              .alistConfirmRemoteDelete !== false
+          )
+          .onChange(async (value) => {
+            this.plugin.settings
+              .alistConfirmRemoteDelete = value;
+            await this.plugin.saveData(
+              this.plugin.settings
+            );
+          })
+      );
     const count = Object.keys(
       this.plugin.settings.shares || {}
     ).length;

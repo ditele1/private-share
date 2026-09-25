@@ -1,5 +1,78 @@
 # Changelog
 
+## 0.5.2
+
+- Added cross-device management-token synchronization for existing shares
+- Update and unshare now claim a fresh management token from the server before modifying a share
+- Mobile and desktop can manage shares created on another device without copying local data.json state
+- Stale local share mappings are cleared automatically when the server no longer has the share
+- Update, copy, customer-link management, discussion, and unshare commands no longer require a pre-existing local share mapping
+- Invite/discussion managers refresh management credentials before use
+## 0.5.1
+
+- Public AList/R2 attachment URLs are now wrapped by a signed Private Share media proxy
+- Notes no longer receive direct R2/S3-facing download URLs for new uploads
+- Media proxy hides the R2 account host from browsers and download prompts
+- Range requests are forwarded for video and audio seeking
+- Excel previews continue to use the self-hosted preview page
+- Media proxy is restricted to the configured AList public host
+## 0.5.0
+
+- Added inline HTML5 video players for AList/R2 video attachments
+- Added inline HTML5 audio players for AList/R2 audio attachments
+- Added self-hosted Excel preview integration for .xls and .xlsx files
+- Excel previews no longer depend on Microsoft Office Online
+- Excel files keep a direct original-file link below the preview
+- Share pages recognize media and Excel links and render them inline
+## 0.4.6
+
+- Added inline HTML5 video playback for AList/R2 video attachments
+- Added inline HTML5 audio playback for AList/R2 audio attachments
+- Added embedded Excel preview for .xls and .xlsx files with the original download link kept below
+- Existing image, PDF, Word, ZIP and other attachment behavior remains unchanged
+## 0.4.5
+
+- Fixed automatic upload failures caused by stale AList file cache
+- Signed URL lookup now falls back to a refreshed parent-directory listing
+- Rapid consecutive pastes are queued instead of skipped while an upload is already running
+## 0.4.4
+
+- Improved automatic attachment upload reliability
+- Automatic scans retry when Obsidian metadata is not ready yet
+- AList file-sign lookup retries while the R2-backed file is still becoming available
+- Increased automatic upload debounce to reduce races after paste or drag-and-drop
+## 0.4.3
+
+- Added automatic AList/R2 attachment upload for modified Markdown notes
+- Dragged or pasted local attachments are detected after a short debounce
+- Local attachment references are automatically replaced with signed public AList URLs
+- Automatic mode keeps the manual upload command as a fallback
+- Automatic scans stay silent when a note has no local attachments
+- Added a settings toggle to enable or disable automatic attachment upload
+## 0.4.2
+
+- Tracks AList/R2 attachments uploaded by each Obsidian note
+- Note rename now moves the remote-attachment bookkeeping with the note
+- Deleting a note can also delete only the remote attachments uploaded and recorded by this plugin
+- Added an optional confirmation prompt before remote AList/R2 deletion
+- Failed remote deletions stay in local bookkeeping for later recovery instead of being silently forgotten
+## 0.4.1
+
+- Fixed AList public attachment links when download signing is enabled
+- Plugin now reads the AList file sign after upload and writes a signed /d/ URL into the note
+- Avoids broken images caused by unsigned public AList download URLs
+## 0.4.0
+
+- Added direct AList attachment uploads from the current Obsidian note
+- Uploads use the LAN AList address while note links use the public AList address
+- AList stores the files in the configured R2-backed mount
+- Local Obsidian embeds and Markdown attachment links can be replaced with public URLs
+- Images stay embedded while PDF, Word, Excel, ZIP and other files become normal links
+- Optional YYYY/MM remote folders are created automatically
+- Unique remote filenames avoid accidental overwrites
+- AList Token authentication is supported, with username/password login as a fallback
+- AList credentials and private URLs remain local in plugin data.json and are not included in the public repository
+- Existing Private Share publishing, customer links and discussions remain unchanged
 ## 0.3.9
 
 - Added a dedicated LAN upload URL for attachments
