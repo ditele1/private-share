@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.5
+
+- Added full cross-device share-state synchronization from the Private Share server
+- Obsidian now syncs all shares after layout startup and refreshes the active note share state
+- Share Manager now refreshes from the server before rendering
+- Server-side shares created on another device are added to the local device automatically
+- Stale local mappings are removed when they no longer exist on the server
+- Passive state sync no longer rotates edit tokens; management tokens are only claimed when modifying a share
 ## 0.5.4
 
 - Fixed media-link requests so the AList remote path is actually sent to the Private Share server

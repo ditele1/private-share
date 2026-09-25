@@ -740,7 +740,7 @@ class ShareManagerModal extends Modal {
       this.plugin.settings.shares || {}
     );
     if (!entries.length) {
-      c.createEl("p", { text: "\u5f53\u524d\u6ca1\u6709\u672c\u673a\u8bb0\u5f55\u7684\u5206\u4eab\u3002" });
+      c.createEl("p", { text: "\u5f53\u524d\u670d\u52a1\u7aef\u6ca1\u6709\u5206\u4eab\u8bb0\u5f55\u3002" });
       return;
     }
 
@@ -748,7 +748,7 @@ class ShareManagerModal extends Modal {
       text:
         "\u5171 " +
         entries.length +
-        " \u7bc7\u5206\u4eab\u3002\u8fd9\u91cc\u663e\u793a\u7684\u662f\u672c\u673a\u63d2\u4ef6\u8bb0\u5f55\u3002",
+        " \u7bc7\u5206\u4eab\u3002\u5df2\u4e0e\u670d\u52a1\u7aef\u540c\u6b65\u3002",
       cls: "private-share-muted",
     });
 
@@ -875,6 +875,47 @@ class PrivateSharePlugin extends Plugin {
     if (!this.settings.shares) this.settings.shares = {};
     this.alistAutoTimers = new Map();
     this.alistAutoRunning = new Set();
+    this.privateShareStateSyncTimers = new Map();
+
+    this.registerEvent(
+      this.app.workspace.on(
+        "file-open",
+        (file) => {
+          if (
+            !(file instanceof TFile) ||
+            file.extension !== "md"
+          ) {
+            return;
+          }
+          const oldTimer =
+            this.privateShareStateSyncTimers.get(file.path);
+          if (oldTimer) window.clearTimeout(oldTimer);
+          const timer = window.setTimeout(() => {
+            this.privateShareStateSyncTimers.delete(file.path);
+            this.syncShareStateForFile(file, {
+              silent: true,
+            });
+          }, 250);
+          this.privateShareStateSyncTimers.set(
+            file.path,
+            timer
+          );
+        }
+      )
+    );
+
+    this.app.workspace.onLayoutReady(async () => {
+      await this.syncAllSharesFromServer({
+        silent: true,
+      });
+      const file =
+        this.app.workspace.getActiveFile();
+      if (file instanceof TFile) {
+        await this.syncShareStateForFile(file, {
+          silent: true,
+        });
+      }
+    });
 
     this.addSettingTab(
       new PrivateShareSettingTab(this.app, this)
@@ -2676,6 +2717,138 @@ class PrivateSharePlugin extends Plugin {
     return resolved.url || (share && share.url) || "";
   }
 
+  async syncAllSharesFromServer(options = {}) {
+    const silent = options.silent !== false;
+    try {
+      const data = await this.api(
+        "/api/shares",
+        "GET",
+        null,
+        null
+      );
+      const remoteShares = Array.isArray(data.shares)
+        ? data.shares
+        : [];
+      const local = this.settings.shares || {};
+      const next = {};
+
+      for (const remote of remoteShares) {
+        const notePath = String(
+          remote && remote.sourcePath
+            ? remote.sourcePath
+            : ""
+        );
+        if (!notePath) continue;
+
+        const existing = local[notePath] || null;
+        const sameShare =
+          existing &&
+          existing.shareId &&
+          remote.shareId &&
+          existing.shareId === remote.shareId;
+
+        next[notePath] = Object.assign(
+          {},
+          existing || {},
+          remote,
+          {
+            editToken:
+              sameShare && existing.editToken
+                ? existing.editToken
+                : "",
+          }
+        );
+      }
+
+      this.settings.shares = next;
+      await this.saveData(this.settings);
+      return next;
+    } catch (error) {
+      if (!silent) {
+        new Notice(
+          "\u540c\u6b65\u5168\u90e8\u5206\u4eab\u5931\u8d25\uff1a" +
+            (error && error.message
+              ? error.message
+              : error),
+          6000
+        );
+      }
+      return this.settings.shares || {};
+    }
+  }
+  async syncShareStateForPath(
+    notePath,
+    options = {}
+  ) {
+    const silent = options.silent !== false;
+    const existing =
+      this.settings.shares[notePath] || null;
+
+    try {
+      const data = await this.api(
+        "/api/share/resolve?sourcePath=" +
+          encodeURIComponent(notePath),
+        "GET",
+        null,
+        null
+      );
+
+      const sameShare =
+        existing &&
+        existing.shareId &&
+        data.shareId &&
+        existing.shareId === data.shareId;
+
+      this.settings.shares[notePath] = Object.assign(
+        {},
+        existing || {},
+        data,
+        {
+          editToken:
+            sameShare && existing.editToken
+              ? existing.editToken
+              : "",
+        }
+      );
+      await this.saveData(this.settings);
+      return this.settings.shares[notePath];
+    } catch (error) {
+      const message =
+        error && error.message
+          ? String(error.message)
+          : String(error || "");
+
+      if (message.toLowerCase().includes("share not found")) {
+        if (existing) {
+          delete this.settings.shares[notePath];
+          await this.saveData(this.settings);
+        }
+        return null;
+      }
+
+      if (!silent) {
+        new Notice(
+          "\u540c\u6b65\u5206\u4eab\u72b6\u6001\u5931\u8d25\uff1a" +
+            message,
+          6000
+        );
+      }
+      return existing;
+    }
+  }
+
+  async syncShareStateForFile(file, options = {}) {
+    if (
+      !(file instanceof TFile) ||
+      file.extension !== "md"
+    ) {
+      return null;
+    }
+    return this.syncShareStateForPath(
+      file.path,
+      options
+    );
+  }
   async claimManageShareForPath(
     notePath,
     fallbackShare,
