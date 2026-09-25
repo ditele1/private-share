@@ -22,6 +22,7 @@ const DEFAULT_SETTINGS = {
   alistUseDateFolders: true,
   alistAutoUpload: true,
   alistDeleteRemoteOnNoteDelete: true,
+  alistDeleteRemoteOnLinkRemove: true,
   alistConfirmRemoteDelete: true,
   alistAssets: {},
   shares: {},
@@ -875,6 +876,7 @@ class PrivateSharePlugin extends Plugin {
     if (!this.settings.shares) this.settings.shares = {};
     this.alistAutoTimers = new Map();
     this.alistAutoRunning = new Set();
+    this.alistReferenceCleanupTimers = new Map();
     this.privateShareStateSyncTimers = new Map();
 
     this.registerEvent(
@@ -1213,6 +1215,7 @@ class PrivateSharePlugin extends Plugin {
         (file) => {
           if (!(file instanceof TFile)) return;
           if (file.extension !== "md") return;
+          this.scheduleAListReferenceCleanup(file);
           if (this.settings.alistAutoUpload === false) return;
           this.scheduleAListAutoUpload(file);
         }
@@ -1901,6 +1904,7 @@ class PrivateSharePlugin extends Plugin {
         publicUrl: uploaded.publicUrl || "",
         originalLocalPath: localPath || "",
         uploadedAt: new Date().toISOString(),
+        seenInNote: true,
       });
     }
 
@@ -1908,6 +1912,152 @@ class PrivateSharePlugin extends Plugin {
       [...byRemotePath.values()];
   }
 
+  scheduleAListReferenceCleanup(file) {
+    if (!(file instanceof TFile) || file.extension !== "md")
+      return;
+    if (
+      this.settings.alistDeleteRemoteOnLinkRemove ===
+      false
+    ) {
+      return;
+    }
+
+    const oldTimer =
+      this.alistReferenceCleanupTimers.get(file.path);
+    if (oldTimer) window.clearTimeout(oldTimer);
+
+    const timer = window.setTimeout(async () => {
+      this.alistReferenceCleanupTimers.delete(file.path);
+      try {
+        await this.cleanupRemovedAListAssetLinks(file);
+      } catch (error) {
+        console.error(
+          "AList orphan attachment cleanup failed",
+          error
+        );
+      }
+    }, 5000);
+
+    this.alistReferenceCleanupTimers.set(
+      file.path,
+      timer
+    );
+  }
+
+  isAListRemotePathUsedByOtherNote(
+    remotePath,
+    currentNotePath
+  ) {
+    const assetMap = this.settings.alistAssets || {};
+    for (const [notePath, assets] of Object.entries(assetMap)) {
+      if (notePath === currentNotePath) continue;
+      if (!Array.isArray(assets)) continue;
+      if (
+        assets.some(
+          (asset) =>
+            asset &&
+            asset.remotePath === remotePath
+        )
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  async cleanupRemovedAListAssetLinks(file) {
+    if (
+      this.settings.alistDeleteRemoteOnLinkRemove ===
+      false
+    ) {
+      return;
+    }
+
+    const assetMap = this.settings.alistAssets || {};
+    const assets = Array.isArray(assetMap[file.path])
+      ? assetMap[file.path]
+      : [];
+    if (!assets.length) return;
+
+    const markdown = await this.app.vault.read(file);
+    let changed = false;
+    let deleted = 0;
+    let token = "";
+    const keep = [];
+
+    for (const asset of assets) {
+      if (
+        !asset ||
+        typeof asset.remotePath !== "string"
+      ) {
+        continue;
+      }
+
+      const publicUrl =
+        typeof asset.publicUrl === "string"
+          ? asset.publicUrl
+          : "";
+
+      if (publicUrl && markdown.includes(publicUrl)) {
+        if (!asset.seenInNote) {
+          asset.seenInNote = true;
+          changed = true;
+        }
+        keep.push(asset);
+        continue;
+      }
+
+      if (!asset.seenInNote) {
+        keep.push(asset);
+        continue;
+      }
+
+      changed = true;
+
+      if (
+        this.isAListRemotePathUsedByOtherNote(
+          asset.remotePath,
+          file.path
+        )
+      ) {
+        continue;
+      }
+
+      try {
+        if (!token) token = await this.getAListToken();
+        await this.deleteAListRemoteAsset(
+          asset.remotePath,
+          token
+        );
+        deleted += 1;
+      } catch (error) {
+        console.error(
+          "Failed to delete removed AList/R2 attachment",
+          asset.remotePath,
+          error
+        );
+        keep.push(asset);
+      }
+    }
+
+    if (!changed) return;
+
+    if (keep.length) {
+      this.settings.alistAssets[file.path] = keep;
+    } else {
+      delete this.settings.alistAssets[file.path];
+    }
+    await this.saveData(this.settings);
+
+    if (deleted > 0) {
+      new Notice(
+        "\u5df2\u6e05\u7406 " +
+          deleted +
+          " \u4e2a\u5df2\u4ece\u7b14\u8bb0\u79fb\u9664\u7684 R2 \u9644\u4ef6",
+        5000
+      );
+    }
+  }
   async deleteAListRemoteAsset(remotePath, token) {
     const lan = normalizeBase(this.settings.alistLanUrl);
     const normalized = normalizeRemotePath(remotePath);
@@ -2001,6 +2151,14 @@ class PrivateSharePlugin extends Plugin {
         )
           continue;
         try {
+          if (
+            this.isAListRemotePathUsedByOtherNote(
+              asset.remotePath,
+              notePath
+            )
+          ) {
+            continue;
+          }
           await this.deleteAListRemoteAsset(
             asset.remotePath,
             token
@@ -3003,15 +3161,36 @@ class PrivateSharePlugin extends Plugin {
         new Notice("\u5206\u4eab\u5df2\u53d6\u6d88");
       return true;
     } catch (error) {
+      const message =
+        error && error.message
+          ? String(error.message)
+          : String(error || "");
+      const lower = message.toLowerCase();
+
+      if (
+        lower.includes("share not found") ||
+        lower.includes("enoent") ||
+        lower.includes("no such file")
+      ) {
+        if (this.settings.shares[notePath]) {
+          delete this.settings.shares[notePath];
+          await this.saveData(this.settings);
+        }
+        if (showNotice) {
+          new Notice(
+            "\u5206\u4eab\u5df2\u5728\u5176\u4ed6\u8bbe\u5907\u53d6\u6d88\uff0c\u672c\u5730\u72b6\u6001\u5df2\u540c\u6b65"
+          );
+        }
+        return true;
+      }
+
       console.error(
         "Private Share unpublish failed",
         error
       );
       new Notice(
         "\u53d6\u6d88\u5206\u4eab\u5931\u8d25\uff1a" +
-          (error && error.message
-            ? error.message
-            : error),
+          message,
         8000
       );
       return false;

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.6
+
+- Added automatic cleanup for plugin-managed AList/R2 attachments after their links are removed from a note
+- Remote files are preserved when another note still tracks the same remote object
+- Historical attachment records are protected unless the plugin has confirmed the URL was actually present in the note
+- Cross-device unshare now treats an already-deleted server share as synchronized success instead of an error
+- Stale local share state is cleared when another device has already cancelled the share
 ## 0.5.5
 
 - Added full cross-device share-state synchronization from the Private Share server
