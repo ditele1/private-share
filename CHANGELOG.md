@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.8
+
+- Cancel all historical shares for the same note path so old shares cannot reappear after synchronization.
+- Treat repeated cancellation as successful and retain local state when cancellation cannot be verified.
+- Requires server 0.8.1 for path-based cancellation.
+
 ## 0.5.7
 
 - Coordinate concurrent upload requests and wait for stable attachment links before publishing.

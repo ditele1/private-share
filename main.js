@@ -3012,71 +3012,16 @@ class PrivateSharePlugin extends Plugin {
     );
   }
 
-  async unshareByPath(
-    notePath,
-    showNotice = true
-  ) {
+  async unshareByPath(notePath, showNotice = true) {
     try {
-      const existing =
-        await this.claimManageShareForPath(
-          notePath,
-          this.settings.shares[notePath] || null,
-          true
-        );
-      if (!existing) {
-        if (showNotice)
-          new Notice(
-            "分享已取消，本地状态已同步"
-          );
-        return true;
-      }
-
-      await this.api(
-        "/api/unpublish/" +
-          encodeURIComponent(
-            existing.shareId
-          ),
-        "DELETE",
-        null,
-        existing.editToken
-      );
-
+      const result = await this.api("/api/share/unpublish", "POST", {sourcePath:notePath});
+      if (result.ok !== true) throw new Error("Invalid unshare response");
       delete this.settings.shares[notePath];
       await this.saveData(this.settings);
-      if (showNotice)
-        new Notice("\u5206\u4eab\u5df2\u53d6\u6d88");
+      if (showNotice) new Notice("分享已取消，本地状态已同步");
       return true;
     } catch (error) {
-      const message =
-        error && error.message
-          ? String(error.message)
-          : String(error || "");
-      const lower = message.toLowerCase();
-
-      if (
-        error.status === 404 && lower.includes("share not found")
-      ) {
-        if (this.settings.shares[notePath]) {
-          delete this.settings.shares[notePath];
-          await this.saveData(this.settings);
-        }
-        if (showNotice) {
-          new Notice(
-            "\u5206\u4eab\u5df2\u5728\u5176\u4ed6\u8bbe\u5907\u53d6\u6d88\uff0c\u672c\u5730\u72b6\u6001\u5df2\u540c\u6b65"
-          );
-        }
-        return true;
-      }
-
-      console.error(
-        "Private Share unpublish failed",
-        error
-      );
-      new Notice(
-        "\u53d6\u6d88\u5206\u4eab\u5931\u8d25\uff1a" +
-          message,
-        8000
-      );
+      if (showNotice) new Notice("取消分享失败：" + (error.message || "请稍后重试"), 8000);
       return false;
     }
   }

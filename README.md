@@ -85,7 +85,7 @@ MIT
 
 ## Media delivery and compatibility
 
-Version 0.5.7 requires Private Share server 0.8.0 and media Worker 1.0.0 for stable media links and reference-aware cleanup. Configure the media edge URL explicitly on the server and store the signing key as a Worker secret. New uploads require a verified `/m/<16-character-code>` URL; registration failures retain the local link and an upload retry record. Existing signed `/f/` URLs remain supported.
+Version 0.5.8 requires Private Share server 0.8.1 and media Worker 1.0.0 for stable media links and reference-aware cleanup. Configure the media edge URL explicitly on the server and store the signing key as a Worker secret. New uploads require a verified `/m/<16-character-code>` URL; registration failures retain the local link and an upload retry record. Existing signed `/f/` URLs remain supported.
 
 Share state refreshes on startup, focus/resume, and every 30 seconds while visible. Passive refresh does not claim a management token. Both devices must use the same server and matching vault-relative note paths.
 
