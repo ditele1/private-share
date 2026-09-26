@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.7
+
+- Coordinate concurrent upload requests and wait for stable attachment links before publishing.
+- Use an Obsidian confirmation dialog for note cleanup on desktop and mobile.
+
+- Refresh share state on focus, resume and every 30 seconds without claiming management credentials.
+- Treat already removed shares as successful unshare and reject malformed sync responses.
+- Require stable media short links and retain successful uploads for retry when registration fails.
+- Apply attachment replacements to the latest note text without overwriting concurrent edits.
+- Verify references across vault notes and published content before remote cleanup; retain protected or failed entries for retry.
+- Add a manual cleanup retry command and conservative periodic retries.
+
+
+
 ## 0.5.6
 
 - Added automatic cleanup for plugin-managed AList/R2 attachments after their links are removed from a note

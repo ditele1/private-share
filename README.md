@@ -82,3 +82,13 @@ Public pages are served under:
 ## License
 
 MIT
+
+## Media delivery and compatibility
+
+Version 0.5.7 requires Private Share server 0.8.0 and media Worker 1.0.0 for stable media links and reference-aware cleanup. Configure the media edge URL explicitly on the server and store the signing key as a Worker secret. New uploads require a verified `/m/<16-character-code>` URL; registration failures retain the local link and an upload retry record. Existing signed `/f/` URLs remain supported.
+
+Share state refreshes on startup, focus/resume, and every 30 seconds while visible. Passive refresh does not claim a management token. Both devices must use the same server and matching vault-relative note paths.
+
+Remote cleanup checks current vault references and published content, and preserves files when verification fails or another ownership record remains. Copied links are checked even without local upload bookkeeping. Offline device edits cannot be observed until synchronized; a server-side ownership ledger is the next step for stronger multi-device guarantees. Use the retry cleanup command for pending deletions.
+
+Run regression checks with `node --check main.js` and `node --test tests/plugin.test.cjs`.

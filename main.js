@@ -878,6 +878,19 @@ class PrivateSharePlugin extends Plugin {
     this.alistAutoRunning = new Set();
     this.alistReferenceCleanupTimers = new Map();
     this.privateShareStateSyncTimers = new Map();
+    this.shareStateRevision = 0;
+    this.registerInterval(window.setInterval(() => {
+      if (!document.hidden) this.syncAllSharesFromServer({silent:true});
+    }, 30000));
+    this.registerDomEvent(document, "visibilitychange", () => {
+      if (!document.hidden) this.syncAllSharesFromServer({silent:true});
+    });
+    this.registerDomEvent(window, "focus", () => this.syncAllSharesFromServer({silent:true}));
+    this.registerInterval(window.setInterval(() => this.retryAListCleanup(), 60000));
+    this.addCommand({id:"retry-remote-attachment-cleanup",name:"重试待清理的远程附件",callback:()=>this.retryAListCleanup()});
+    this.register(() => {
+      for (const map of [this.alistAutoTimers,this.alistReferenceCleanupTimers,this.privateShareStateSyncTimers]) for (const timer of map.values()) window.clearTimeout(timer);
+    });
 
     this.registerEvent(
       this.app.workspace.on(
@@ -1432,6 +1445,10 @@ class PrivateSharePlugin extends Plugin {
           "Private Share media proxy link failed"
       );
     }
+    const parsed = new URL(data.url);
+    if (parsed.protocol !== "https:" || !/^\/m\/[A-Za-z0-9_-]{16}$/.test(parsed.pathname) || parsed.search) {
+      throw new Error("服务端未返回稳定短链，已保留本地附件。请检查媒体服务配置。");
+    }
     return data.url;
   }
   async getAListFileSign(
@@ -1623,6 +1640,13 @@ class PrivateSharePlugin extends Plugin {
     if (!settings)
       throw new Error("AList settings missing");
 
+    const uploadKey = target.path + ":" + target.stat.mtime + ":" + target.stat.size;
+    this.settings.pendingAListUploads ||= {};
+    const pending = this.settings.pendingAListUploads[uploadKey];
+    if (pending) {
+      const publicUrl = await this.getMediaProxyUrl("", pending.remotePath);
+      return {...pending, publicUrl, uploadKey};
+    }
     const binary = await this.app.vault.readBinary(target);
     const remotePath = this.buildAListRemotePath(
       target.name
@@ -1668,30 +1692,21 @@ class PrivateSharePlugin extends Plugin {
       );
     }
 
-    const sign = await this.getAListFileSign(
-      remotePath,
-      token
-    );
-
-    const upstreamUrl = this.buildAListPublicUrl(
-      remotePath,
-      sign
-    );
-    const publicUrl = await this.getMediaProxyUrl(
-      upstreamUrl,
-      remotePath
-    );
-
-    return {
-      remotePath,
-      publicUrl,
-      upstreamUrl,
-    };
+    this.settings.pendingAListUploads[uploadKey] = {remotePath};
+    await this.saveData(this.settings);
+    const publicUrl = await this.getMediaProxyUrl("", remotePath);
+    return {remotePath, publicUrl, uploadKey};
   }
-  async uploadCurrentNoteAttachmentsToAList(
-    file,
-    runOptions = {}
-  ) {
+
+  async uploadCurrentNoteAttachmentsToAList(file, runOptions = {}) {
+    this.alistUploadJobs ||= new Map();
+    if (this.alistUploadJobs.has(file.path)) return this.alistUploadJobs.get(file.path);
+    const job = this.performAListUpload(file, runOptions);
+    this.alistUploadJobs.set(file.path, job);
+    try { return await job; } finally { this.alistUploadJobs.delete(file.path); }
+  }
+
+  async performAListUpload(file, runOptions = {}) {
     const automatic = !!runOptions.automatic;
     const silentNoop = !!runOptions.silentNoop;
     try {
@@ -1699,7 +1714,7 @@ class PrivateSharePlugin extends Plugin {
       if (!settings) return false;
 
       let markdown = await this.app.vault.read(file);
-      const token = await this.getAListToken();
+      let token = "";
       const replacements = [];
       const seenTargets = new Map();
 
@@ -1728,6 +1743,7 @@ class PrivateSharePlugin extends Plugin {
             2500
           );
           }
+          if (!token) token = await this.getAListToken();
           uploaded = await this.uploadFileToAList(
             target,
             token
@@ -1788,6 +1804,7 @@ class PrivateSharePlugin extends Plugin {
             2500
           );
           }
+          if (!token) token = await this.getAListToken();
           uploaded = await this.uploadFileToAList(
             target,
             token
@@ -1821,7 +1838,7 @@ class PrivateSharePlugin extends Plugin {
                 1000 + attempt * 750
               )
             );
-            return this.uploadCurrentNoteAttachmentsToAList(
+            return this.performAListUpload(
               file,
               {
                 automatic: true,
@@ -1839,14 +1856,14 @@ class PrivateSharePlugin extends Plugin {
         return false;
       }
 
-      for (const item of replacements) {
-        markdown = markdown.replace(item.from, item.to);
-      }
-
-      await this.app.vault.modify(file, markdown);
+      await this.app.vault.process(file, (latest) => {
+        for (const item of replacements) latest = latest.split(item.from).join(item.to);
+        markdown = latest;
+        return latest;
+      });
       this.recordAListAssetsForNote(
         file.path,
-        seenTargets
+        new Map([...seenTargets].filter(([, asset]) => markdown.includes(asset.publicUrl)))
       );
       await this.saveData(this.settings);
       new Notice(
@@ -1899,6 +1916,7 @@ class PrivateSharePlugin extends Plugin {
         typeof uploaded.remotePath !== "string"
       )
         continue;
+      if (uploaded.uploadKey) delete this.settings.pendingAListUploads?.[uploaded.uploadKey];
       byRemotePath.set(uploaded.remotePath, {
         remotePath: uploaded.remotePath,
         publicUrl: uploaded.publicUrl || "",
@@ -1944,120 +1962,69 @@ class PrivateSharePlugin extends Plugin {
     );
   }
 
-  isAListRemotePathUsedByOtherNote(
-    remotePath,
-    currentNotePath
-  ) {
-    const assetMap = this.settings.alistAssets || {};
-    for (const [notePath, assets] of Object.entries(assetMap)) {
-      if (notePath === currentNotePath) continue;
-      if (!Array.isArray(assets)) continue;
-      if (
-        assets.some(
-          (asset) =>
-            asset &&
-            asset.remotePath === remotePath
-        )
-      ) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   async cleanupRemovedAListAssetLinks(file) {
-    if (
-      this.settings.alistDeleteRemoteOnLinkRemove ===
-      false
-    ) {
-      return;
-    }
-
-    const assetMap = this.settings.alistAssets || {};
-    const assets = Array.isArray(assetMap[file.path])
-      ? assetMap[file.path]
-      : [];
+    if (this.settings.alistDeleteRemoteOnLinkRemove === false) return;
+    if (this.alistAutoRunning?.has(file.path) || this.alistUploadJobs?.has(file.path)) return;
+    const assets = this.settings.alistAssets?.[file.path] || [];
     if (!assets.length) return;
-
-    const markdown = await this.app.vault.read(file);
-    let changed = false;
-    let deleted = 0;
-    let token = "";
-    const keep = [];
-
+    const text = (await this.app.vault.read(file)).replaceAll("&amp;", "&");
     for (const asset of assets) {
-      if (
-        !asset ||
-        typeof asset.remotePath !== "string"
-      ) {
-        continue;
+      if (asset.publicUrl && text.includes(asset.publicUrl)) {
+        asset.seenInNote = true; delete asset.pendingDelete;
+      } else if (asset.seenInNote) {
+        asset.pendingDelete = true; asset.deleteReason = "link";
       }
-
-      const publicUrl =
-        typeof asset.publicUrl === "string"
-          ? asset.publicUrl
-          : "";
-
-      if (publicUrl && markdown.includes(publicUrl)) {
-        if (!asset.seenInNote) {
-          asset.seenInNote = true;
-          changed = true;
-        }
-        keep.push(asset);
-        continue;
-      }
-
-      if (!asset.seenInNote) {
-        keep.push(asset);
-        continue;
-      }
-
-      changed = true;
-
-      if (
-        this.isAListRemotePathUsedByOtherNote(
-          asset.remotePath,
-          file.path
-        )
-      ) {
-        continue;
-      }
-
-      try {
-        if (!token) token = await this.getAListToken();
-        await this.deleteAListRemoteAsset(
-          asset.remotePath,
-          token
-        );
-        deleted += 1;
-      } catch (error) {
-        console.error(
-          "Failed to delete removed AList/R2 attachment",
-          asset.remotePath,
-          error
-        );
-        keep.push(asset);
-      }
-    }
-
-    if (!changed) return;
-
-    if (keep.length) {
-      this.settings.alistAssets[file.path] = keep;
-    } else {
-      delete this.settings.alistAssets[file.path];
     }
     await this.saveData(this.settings);
-
-    if (deleted > 0) {
-      new Notice(
-        "\u5df2\u6e05\u7406 " +
-          deleted +
-          " \u4e2a\u5df2\u4ece\u7b14\u8bb0\u79fb\u9664\u7684 R2 \u9644\u4ef6",
-        5000
-      );
-    }
+    await this.retryAListCleanup();
   }
+
+  async verifyAListReferences() {
+    const urls = new Set();
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const text = await this.app.vault.read(file);
+      for (const url of text.match(/https?:\/\/[^\s<>"')]+/g) || []) urls.add(url.replaceAll("&amp;", "&"));
+    }
+    const data = await this.api("/api/media/references", "POST", {urls:[...urls]});
+    if (!Array.isArray(data.remotePaths) || data.unresolved !== false) throw new Error("存在未能核实的附件引用，已保留远程文件");
+    return new Set(data.remotePaths.map(normalizeRemotePath));
+  }
+
+  async retryAListCleanup() {
+    if (this.alistCleanupRunning) return;
+    this.alistCleanupRunning = true;
+    try {
+      const entries = Object.entries(this.settings.alistAssets || {});
+      for (const [notePath, assets] of entries) {
+        if (!Array.isArray(assets)) continue;
+        for (const asset of [...assets]) {
+          if (!asset.pendingDelete || !asset.remotePath) continue;
+          if (asset.deleteReason === "note" && this.settings.alistDeleteRemoteOnNoteDelete === false) continue;
+          if (asset.deleteReason === "link" && this.settings.alistDeleteRemoteOnLinkRemove === false) continue;
+          if (this.alistAutoRunning?.size || this.alistUploadJobs?.size) continue;
+          try {
+            // Re-read all notes immediately before each delete. Unavailable checks fail closed.
+            const references = await this.verifyAListReferences();
+            if (references.has(normalizeRemotePath(asset.remotePath))) {
+              asset.cleanupStatus = "referenced"; continue;
+            }
+            // Unknown historical ownership records protect the object as well.
+            const uncertain = entries.some(([owner, list]) => owner !== notePath && Array.isArray(list) && list.some(x => x.remotePath === asset.remotePath && !x.pendingDelete));
+            if (uncertain) {asset.cleanupStatus = "tracked-elsewhere";continue;}
+            const token = await this.getAListToken();
+            await this.deleteAListRemoteAsset(asset.remotePath, token);
+            const index = assets.indexOf(asset); if (index >= 0) assets.splice(index, 1);
+          } catch (_) {
+            asset.cleanupStatus = "retry";
+            asset.lastAttempt = new Date().toISOString();
+          }
+        }
+        if (!assets.length) delete this.settings.alistAssets[notePath];
+      }
+      await this.saveData(this.settings);
+    } finally { this.alistCleanupRunning = false; }
+  }
+
   async deleteAListRemoteAsset(remotePath, token) {
     const lan = normalizeBase(this.settings.alistLanUrl);
     const normalized = normalizeRemotePath(remotePath);
@@ -2103,126 +2070,32 @@ class PrivateSharePlugin extends Plugin {
     }
   }
 
+  async confirmRemoteCleanup(notePath) {
+    return new Promise((resolve) => {
+      const modal = new Modal(this.app);
+      let finished = false;
+      const done = (answer) => { if (finished) return; finished = true; resolve(answer); modal.close(); };
+      modal.onOpen = () => {
+        modal.contentEl.createEl("h3", {text:"清理已删除笔记的远程附件？"});
+        modal.contentEl.createEl("p", {text:notePath});
+        modal.contentEl.createEl("p", {text:"只清理插件上传且没有其他引用的文件。核实失败的文件将保留。"});
+        const buttons = modal.contentEl.createDiv();
+        buttons.createEl("button", {text:"保留"}).onclick = () => done(false);
+        buttons.createEl("button", {text:"检查并清理", cls:"mod-warning"}).onclick = () => done(true);
+      };
+      modal.onClose = () => {if (!finished) {finished = true; resolve(false);}};
+      modal.open();
+    });
+  }
+
   async handleDeletedNoteAListAssets(notePath) {
-    const assetMap = this.settings.alistAssets || {};
-    const assets = Array.isArray(assetMap[notePath])
-      ? assetMap[notePath]
-      : [];
+    if (this.settings.alistDeleteRemoteOnNoteDelete === false) return;
+    const assets = this.settings.alistAssets?.[notePath] || [];
     if (!assets.length) return;
-
-    if (
-      this.settings.alistDeleteRemoteOnNoteDelete ===
-      false
-    ) {
-      return;
-    }
-
-    if (
-      this.settings.alistConfirmRemoteDelete !== false
-    ) {
-      const confirmed =
-        typeof window !== "undefined" &&
-        typeof window.confirm === "function"
-          ? window.confirm(
-              "\u5df2\u5220\u9664\u7b14\u8bb0\uff1a" +
-                notePath +
-                "\n\n\u662f\u5426\u540c\u65f6\u5220\u9664 " +
-                assets.length +
-                " \u4e2a AList / R2 \u8fdc\u7a0b\u9644\u4ef6\uff1f\n\n\u53ea\u4f1a\u5220\u9664 Private Share \u63d2\u4ef6\u81ea\u5df1\u4e0a\u4f20\u5e76\u8bb0\u5f55\u7684\u9644\u4ef6\u3002"
-            )
-          : false;
-      if (!confirmed) {
-        new Notice(
-          "\u5df2\u4fdd\u7559 AList / R2 \u8fdc\u7a0b\u9644\u4ef6"
-        );
-        return;
-      }
-    }
-
-    try {
-      const token = await this.getAListToken();
-      let deleted = 0;
-      const failed = [];
-
-      for (const asset of assets) {
-        if (
-          !asset ||
-          typeof asset.remotePath !== "string"
-        )
-          continue;
-        try {
-          if (
-            this.isAListRemotePathUsedByOtherNote(
-              asset.remotePath,
-              notePath
-            )
-          ) {
-            continue;
-          }
-          await this.deleteAListRemoteAsset(
-            asset.remotePath,
-            token
-          );
-          deleted += 1;
-        } catch (error) {
-          failed.push({
-            remotePath: asset.remotePath,
-            error:
-              error && error.message
-                ? error.message
-                : String(error),
-          });
-        }
-      }
-
-      if (failed.length === 0) {
-        delete this.settings.alistAssets[notePath];
-        await this.saveData(this.settings);
-        new Notice(
-          "\u5df2\u540c\u6b65\u5220\u9664 " +
-            deleted +
-            " \u4e2a AList / R2 \u8fdc\u7a0b\u9644\u4ef6",
-          6000
-        );
-        return;
-      }
-
-      const failedPaths = new Set(
-        failed.map((item) => item.remotePath)
-      );
-      this.settings.alistAssets[notePath] =
-        assets.filter(
-          (asset) =>
-            asset &&
-            failedPaths.has(asset.remotePath)
-        );
-      await this.saveData(this.settings);
-
-      console.error(
-        "Some AList remote attachments failed to delete",
-        failed
-      );
-      new Notice(
-        "\u8fdc\u7a0b\u9644\u4ef6\u5220\u9664\u90e8\u5206\u5931\u8d25\uff1a\u5df2\u5220 " +
-          deleted +
-          "\uff0c\u5931\u8d25 " +
-          failed.length +
-          "\u3002\u5931\u8d25\u9879\u5df2\u4fdd\u7559\u5728\u672c\u5730\u8bb0\u5f55\u4e2d\u3002",
-        9000
-      );
-    } catch (error) {
-      console.error(
-        "AList remote cleanup failed",
-        error
-      );
-      new Notice(
-        "AList / R2 \u8fdc\u7a0b\u9644\u4ef6\u5220\u9664\u5931\u8d25\uff1a" +
-          (error && error.message
-            ? error.message
-            : error),
-        9000
-      );
-    }
+    if (this.settings.alistConfirmRemoteDelete !== false && !await this.confirmRemoteCleanup(notePath)) return;
+    for (const asset of assets) {asset.pendingDelete = true;asset.deleteReason = "note";}
+    await this.saveData(this.settings);
+    await this.retryAListCleanup();
   }
   validateSettings() {
     const server = normalizeBase(
@@ -2241,7 +2114,9 @@ class PrivateSharePlugin extends Plugin {
     return server;
   }
 
-  openShareOptions(file, mode) {
+  async openShareOptions(file, mode) {
+    await this.syncShareStateForFile(file, {silent:true});
+    mode = this.settings.shares[file.path] ? "update" : "create";
     const existing =
       this.settings.shares[file.path] || null;
     new ShareOptionsModal(
@@ -2261,6 +2136,8 @@ class PrivateSharePlugin extends Plugin {
   }
 
   async preparePayload(file, options, existing) {
+    const useAList = this.settings.alistAutoUpload !== false && !!this.settings.alistLanUrl;
+    if (useAList) await this.uploadCurrentNoteAttachmentsToAList(file, {silentNoop:true});
     let markdown = await this.app.vault.read(file);
     const attachments = [];
     const uploads = [];
@@ -2285,6 +2162,7 @@ class PrivateSharePlugin extends Plugin {
       )
         continue;
 
+      if (useAList) throw new Error("附件还未获得稳定短链，请重试上传后再分享");
       const ext = target.extension
         ? "." + target.extension.toLowerCase()
         : "";
@@ -2660,6 +2538,7 @@ class PrivateSharePlugin extends Plugin {
     if (!server)
       throw new Error("missing settings");
 
+    if (method !== "GET") this.shareStateRevision = (this.shareStateRevision || 0) + 1;
     const headers = {
       Authorization:
         "Bearer " + this.settings.apiToken,
@@ -2690,10 +2569,9 @@ class PrivateSharePlugin extends Plugin {
       response.status < 200 ||
       response.status >= 300
     ) {
-      throw new Error(
-        data.error ||
-          "HTTP " + response.status
-      );
+      const error = new Error(data.error || "HTTP " + response.status);
+      error.status = response.status;
+      throw error;
     }
     return data;
   }
@@ -2877,6 +2755,10 @@ class PrivateSharePlugin extends Plugin {
 
   async syncAllSharesFromServer(options = {}) {
     const silent = options.silent !== false;
+    if (this.fullShareSyncRunning) return this.settings.shares || {};
+    this.fullShareSyncRunning = true;
+    const revision = this.shareStateRevision || 0;
+    const stateSnapshot = JSON.stringify(this.settings.shares);
     try {
       const data = await this.api(
         "/api/shares",
@@ -2884,9 +2766,9 @@ class PrivateSharePlugin extends Plugin {
         null,
         null
       );
-      const remoteShares = Array.isArray(data.shares)
-        ? data.shares
-        : [];
+      if (!Array.isArray(data.shares)) throw new Error("Invalid share-state response");
+      if (revision !== (this.shareStateRevision || 0) || stateSnapshot !== JSON.stringify(this.settings.shares)) return this.settings.shares;
+      const remoteShares = data.shares;
       const local = this.settings.shares || {};
       const next = {};
 
@@ -2896,7 +2778,7 @@ class PrivateSharePlugin extends Plugin {
             ? remote.sourcePath
             : ""
         );
-        if (!notePath) continue;
+        if (!notePath || next[notePath]) continue;
 
         const existing = local[notePath] || null;
         const sameShare =
@@ -2932,7 +2814,7 @@ class PrivateSharePlugin extends Plugin {
         );
       }
       return this.settings.shares || {};
-    }
+    } finally { this.fullShareSyncRunning = false; }
   }
   async syncShareStateForPath(
     notePath,
@@ -2941,6 +2823,7 @@ class PrivateSharePlugin extends Plugin {
     const silent = options.silent !== false;
     const existing =
       this.settings.shares[notePath] || null;
+    const revision = this.shareStateRevision || 0;
 
     try {
       const data = await this.api(
@@ -2951,6 +2834,8 @@ class PrivateSharePlugin extends Plugin {
         null
       );
 
+      if (revision !== (this.shareStateRevision || 0)) return this.settings.shares[notePath] || null;
+      if (!data.shareId) throw new Error("Invalid share-state response");
       const sameShare =
         existing &&
         existing.shareId &&
@@ -2976,7 +2861,8 @@ class PrivateSharePlugin extends Plugin {
           ? String(error.message)
           : String(error || "");
 
-      if (message.toLowerCase().includes("share not found")) {
+      if (revision !== (this.shareStateRevision || 0)) return this.settings.shares[notePath] || null;
+      if (error.status === 404 && message.toLowerCase().includes("share not found")) {
         if (existing) {
           delete this.settings.shares[notePath];
           await this.saveData(this.settings);
@@ -3033,7 +2919,7 @@ class PrivateSharePlugin extends Plugin {
           ? String(error.message)
           : String(error || "");
       if (
-        allowMissing &&
+        allowMissing && error.status === 404 &&
         message.toLowerCase().includes("share not found")
       ) {
         if (this.settings.shares[notePath]) {
@@ -3140,9 +3026,9 @@ class PrivateSharePlugin extends Plugin {
       if (!existing) {
         if (showNotice)
           new Notice(
-            "\u8fd9\u7bc7\u7b14\u8bb0\u6ca1\u6709\u5206\u4eab\u8bb0\u5f55"
+            "分享已取消，本地状态已同步"
           );
-        return false;
+        return true;
       }
 
       await this.api(
@@ -3168,9 +3054,7 @@ class PrivateSharePlugin extends Plugin {
       const lower = message.toLowerCase();
 
       if (
-        lower.includes("share not found") ||
-        lower.includes("enoent") ||
-        lower.includes("no such file")
+        error.status === 404 && lower.includes("share not found")
       ) {
         if (this.settings.shares[notePath]) {
           delete this.settings.shares[notePath];
