@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.9
+
+- Add password-encrypted configuration import/export, mobile file/text transfer, preview and rollback.
+- Support public-only AList configuration and preserve explicitly configured AList tokens.
+- Preserve local share state, attachment ownership and pending jobs during configuration import.
+- Add metadata-only expiry changes and confirmed deletion to every share-manager row.
+- Keep note content, attachments, access passwords and discussions intact when changing expiry.
+- Requires server 0.8.3 for expiry changes and Excel web preview.
+
 ## 0.5.8
 
 - Cancel all historical shares for the same note path so old shares cannot reappear after synchronization.

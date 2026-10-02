@@ -92,3 +92,15 @@ Share state refreshes on startup, focus/resume, and every 30 seconds while visib
 Remote cleanup checks current vault references and published content, and preserves files when verification fails or another ownership record remains. Copied links are checked even without local upload bookkeeping. Offline device edits cannot be observed until synchronized; a server-side ownership ledger is the next step for stronger multi-device guarantees. Use the retry cleanup command for pending deletions.
 
 Run regression checks with `node --check main.js` and `node --test tests/plugin.test.cjs`.
+
+## Configuration transfer and share management (0.5.9)
+
+Open **Settings → Private Share → Configuration import/export**. Export a password-encrypted file (at least 8 characters), save it in the vault or copy the encrypted text, and import it on the new device. Preview the destination addresses before applying. Local attachment records, pending uploads and management tokens are preserved. Use **Restore previous configuration** with the import password to undo an import. Importing a different backend over existing ownership records is rejected.
+
+The share manager provides **Change expiry** (permanent, relative duration or a local date/time) and confirmed **Delete share** on every row, including remote-only notes and shares with discussion disabled. Expiry changes preserve the published note, attachments, password and discussion; deletion revokes all historical shares for the selected note path and their customer discussions. It leaves the vault note and AList-uploaded originals intact.
+
+Server **0.8.3+** is required for expiry changes and Excel preview. Spreadsheet links in shared pages open a self-hosted preview with worksheet selection and an original-download link. XLSX, XLS (Excel 97+), and XLSM cell values and saved formula results are supported; macros are never executed. Charts, images and complex formatting require the original file. Preview is bounded to 8 MiB input, 500 rows, 64 columns and 16,000 cells, with time and concurrency limits.
+
+Configuration export uses Web Crypto AES-256-GCM and PBKDF2-SHA256. The password is not stored. Unsupported runtime cryptography or damaged files fail without applying configuration.
+
+New-device exports omit LAN addresses by default. With no AList LAN URL, login, uploads and cleanup use the public URL. Explicitly configured AList tokens are encrypted and preserved during transfer.

@@ -23,3 +23,5 @@
 .private-share-manager-actions{width:100%}
 .private-share-discussion-entry.is-reply{margin-left:12px}
 }
+
+.private-share-config-text{width:100%;max-height:35vh;font-family:var(--font-monospace);overflow-wrap:anywhere}

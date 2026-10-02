@@ -722,151 +722,188 @@ class DiscussionModal extends Modal {
   }
 }
 
-class ShareManagerModal extends Modal {
-  constructor(app, plugin) {
-    super(app);
-    this.plugin = plugin;
+const PROFILE_FIELDS = {
+  serverUrl: "string", apiToken: "string", alistPublicUrl: "string",
+  alistUsername: "string", alistPassword: "string", alistToken: "string", alistRootPath: "string",
+  localUploadUrl: "string", alistLanUrl: "string", alistUseDateFolders: "boolean",
+  alistAutoUpload: "boolean", alistDeleteRemoteOnNoteDelete: "boolean",
+  alistDeleteRemoteOnLinkRemove: "boolean", alistConfirmRemoteDelete: "boolean",
+};
+const PROFILE_LAN = ["localUploadUrl", "alistLanUrl"];
+const PROFILE_PREFS = Object.keys(PROFILE_FIELDS).filter(k=>PROFILE_FIELDS[k]==="boolean");
+const PROFILE_AAD = "obsidian-private-share-config:1:AES-256-GCM:PBKDF2-SHA256:600000";
+function portableConfig(settings, options={}) {
+  const out={};
+  for(const [key,type] of Object.entries(PROFILE_FIELDS)){
+    if(options.lan===false&&PROFILE_LAN.includes(key))continue;
+    if(options.preferences===false&&PROFILE_PREFS.includes(key))continue;
+    if(typeof settings[key]===type)out[key]=settings[key];
   }
-
-  onOpen() {
-    this.render();
+  return validatePortableConfig(out);
+}
+function validatePortableConfig(config) {
+  if(!config||typeof config!=="object"||Array.isArray(config))throw Error("配置格式不正确");
+  for(const [key,value] of Object.entries(config)){
+    if(!Object.prototype.hasOwnProperty.call(PROFILE_FIELDS,key)||typeof value!==PROFILE_FIELDS[key])throw Error("配置包含不支持的字段");
+    if(typeof value==="string"&&value.length>4096)throw Error("配置字段过长");
+    if(/Url$/.test(key)&&value){let u;try{u=new URL(value)}catch{throw Error("配置地址不正确")}
+      if(!["http:","https:"].includes(u.protocol)||u.username||u.password||u.hash)throw Error("配置地址不正确");}
   }
-
-  render() {
-    const c = this.contentEl;
-    c.empty();
-    c.createEl("h2", { text: "Private Share \u7ba1\u7406" });
-
-    const entries = Object.entries(
-      this.plugin.settings.shares || {}
-    );
-    if (!entries.length) {
-      c.createEl("p", { text: "\u5f53\u524d\u670d\u52a1\u7aef\u6ca1\u6709\u5206\u4eab\u8bb0\u5f55\u3002" });
-      return;
-    }
-
-    c.createEl("p", {
-      text:
-        "\u5171 " +
-        entries.length +
-        " \u7bc7\u5206\u4eab\u3002\u5df2\u4e0e\u670d\u52a1\u7aef\u540c\u6b65\u3002",
-      cls: "private-share-muted",
-    });
-
-    const list = c.createDiv({
-      cls: "private-share-manager",
-    });
-
-    for (const [notePath, share] of entries) {
-      const row = list.createDiv({
-        cls: "private-share-manager-row",
-      });
-
-      const info = row.createDiv({
-        cls: "private-share-manager-info",
-      });
-      info.createEl("strong", {
-        text:
-          share.title ||
-          notePath.split("/").pop() ||
-          notePath,
-      });
-      info.createEl("div", {
-        text: notePath,
-        cls: "private-share-muted",
-      });
-
-      const badges = info.createDiv({
-        cls: "private-share-badges",
-      });
-      if (share.passwordProtected) {
-        badges.createSpan({
-          text: "\u5bc6\u7801\u4fdd\u62a4",
-          cls: "private-share-badge",
-        });
-      }
-      if (share.expiresAt) {
-        badges.createSpan({
-          text: "\u5230\u671f\uff1a" + formatTime(share.expiresAt),
-          cls: "private-share-badge",
-        });
-      }
-        badges.createSpan({
-          text: "\u5ba2\u6237\u8ba8\u8bba",
-          cls: "private-share-badge",
-        });
-      }
-
-      const actions = row.createDiv({
-        cls: "private-share-manager-actions",
-      });
-
-      actions
-        .createEl("button", { text: "\u590d\u5236\u94fe\u63a5" })
-        .addEventListener("click", async () => {
-          await this.plugin.copyResolvedShareUrl(
-            notePath,
-            share,
-            false
-          );
-          new Notice("\u5206\u4eab\u94fe\u63a5\u5df2\u590d\u5236");
-        });
-
-      const file =
-        this.app.vault.getAbstractFileByPath(notePath);
-      if (file instanceof TFile) {
-        actions
-          .createEl("button", { text: "\u66f4\u65b0" })
-          .addEventListener("click", () => {
-            this.close();
-            this.plugin.openShareOptions(file, "update");
-          });
-      }
-
-      if (share.discussionEnabled) {
-        actions
-          .createEl("button", { text: "\u5ba2\u6237\u94fe\u63a5" })
-          .addEventListener("click", () => {
-            new InviteManagerModal(
-              this.app,
-              this.plugin,
-              notePath,
-              share
-            ).open();
-          });
-
-        actions
-          .createEl("button", { text: "\u67e5\u770b\u8ba8\u8bba" })
-          .addEventListener("click", () => {
-            new DiscussionModal(
-              this.app,
-              this.plugin,
-              notePath,
-              share
-            ).open();
-          });
-
-      actions
-        .createEl("button", {
-          text: "\u53d6\u6d88\u5206\u4eab",
-          cls: "mod-warning",
-        })
-        .addEventListener("click", async () => {
-          const ok = await this.plugin.unshareByPath(
-            notePath,
-            false
-          );
-          if (ok) this.render();
-        });
-    }
-  }
-
-  onClose() {
-    this.contentEl.empty();
-  }
+  return {...config};
+}
+function profileBytes(value, length) {
+  if(typeof value!=="string"||value.length>350000||!/^[A-Za-z0-9+/]*={0,2}$/.test(value))throw Error("配置文件格式不正确");
+  const bytes=Uint8Array.from(atob(value),c=>c.charCodeAt(0));
+  if(length&&bytes.length!==length)throw Error("配置文件格式不正确");return bytes;
+}
+function profileCrypto() {
+  if(!globalThis.crypto?.subtle)throw Error("当前环境不支持加密配置，请更新 Obsidian 后重试");
+  return globalThis.crypto;
+}
+async function profileKey(password,salt) {
+  const c=profileCrypto(),enc=new TextEncoder();
+  const material=await c.subtle.importKey("raw",enc.encode(password),"PBKDF2",false,["deriveKey"]);
+  return c.subtle.deriveKey({name:"PBKDF2",hash:"SHA-256",salt,iterations:600000},material,{name:"AES-GCM",length:256},false,["encrypt","decrypt"]);
+}
+async function encryptProfile(config,password,version) {
+  if(typeof password!=="string"||password.length<8)throw Error("导出密码至少需要 8 个字符");
+  config=validatePortableConfig(config);
+  const c=profileCrypto(),salt=c.getRandomValues(new Uint8Array(16)),iv=c.getRandomValues(new Uint8Array(12)),key=await profileKey(password,salt),enc=new TextEncoder();
+  const ciphertext=await c.subtle.encrypt({name:"AES-GCM",iv,additionalData:enc.encode(PROFILE_AAD),tagLength:128},key,enc.encode(JSON.stringify(config)));
+  return JSON.stringify({format:"obsidian-private-share-config",schemaVersion:1,pluginVersion:version,createdAt:new Date().toISOString(),crypto:{cipher:"AES-256-GCM",kdf:"PBKDF2-SHA256",iterations:600000,salt:arrayBufferToBase64(salt),iv:arrayBufferToBase64(iv)},ciphertext:arrayBufferToBase64(ciphertext)},null,2);
+}
+async function decryptProfile(text,password) {
+  if(typeof text!=="string"||text.length>262144)throw Error("配置文件过大");
+  let file;try{file=JSON.parse(text)}catch{throw Error("请选择加密配置文件，不支持直接导入 data.json")}
+  if(file?.format!=="obsidian-private-share-config"||file.schemaVersion!==1||file.crypto?.cipher!=="AES-256-GCM"||file.crypto?.kdf!=="PBKDF2-SHA256"||file.crypto?.iterations!==600000)throw Error("不支持的配置文件版本或加密格式");
+  const salt=profileBytes(file.crypto.salt,16),iv=profileBytes(file.crypto.iv,12),ciphertext=profileBytes(file.ciphertext);
+  if(ciphertext.length<16)throw Error("配置文件格式不正确");
+  const c=profileCrypto(),key=await profileKey(password,salt);let plain;
+  try{plain=await c.subtle.decrypt({name:"AES-GCM",iv,additionalData:new TextEncoder().encode(PROFILE_AAD),tagLength:128},key,ciphertext)}catch{throw Error("密码不正确或配置文件已损坏")}
+  try{return validatePortableConfig(JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(plain)))}catch{throw Error("配置文件内容不正确")}
 }
 
+class ActionConfirmModal extends Modal {
+  constructor(app,title,message,done){super(app);this.title=title;this.message=message;this.done=done;this.accepted=false;}
+  onOpen(){const c=this.contentEl;c.createEl("h2",{text:this.title});c.createEl("p",{text:this.message});
+    new Setting(c).addButton(b=>b.setButtonText("取消").onClick(()=>this.close())).addButton(b=>b.setButtonText("确认").setWarning().onClick(()=>{this.accepted=true;this.close()}));}
+  onClose(){this.contentEl.empty();this.done(this.accepted)}
+}
+class ShareExpiryModal extends Modal {
+  constructor(app,plugin,notePath,share,done){super(app);Object.assign(this,{plugin,notePath,share,done});this.choice="keep";this.custom="";}
+  onOpen(){const c=this.contentEl;c.createEl("h2",{text:"修改分享到期时间"});c.createEl("p",{text:"当前："+(this.share.expiresAt?formatTime(this.share.expiresAt):"永久有效")});
+    new Setting(c).setName("有效期").addDropdown(d=>d.addOption("keep","保持当前设置").addOption("none","永久有效").addOption("1h","从现在起 1 小时").addOption("1d","从现在起 1 天").addOption("7d","从现在起 7 天").addOption("30d","从现在起 30 天").addOption("custom","指定日期和时间").setValue(this.choice).onChange(v=>this.choice=v));
+    new Setting(c).setName("指定时间").setDesc("仅在选择指定日期和时间时生效，使用本设备时区。").addText(t=>{t.inputEl.type="datetime-local";t.onChange(v=>this.custom=v)});
+    new Setting(c).addButton(b=>b.setButtonText("取消").onClick(()=>this.close())).addButton(b=>b.setButtonText("保存").setCta().onClick(async()=>{
+      if(this.choice==="keep"){this.close();return}
+      let expiry=this.choice==="custom"?(this.custom?new Date(this.custom):null):computeExpiry(this.choice);
+      if(this.choice!=="none"&&(!expiry||!Number.isFinite(new Date(expiry).getTime())||new Date(expiry).getTime()<=Date.now())){new Notice("请选择未来的到期时间");return}
+      b.setDisabled(true);try{await this.plugin.changeShareExpiry(this.notePath,this.share,this.choice==="none"?null:new Date(expiry).toISOString());this.close();this.done();new Notice("分享有效期已更新")}catch(e){new Notice("修改失败："+e.message);b.setDisabled(false)}
+    }));
+  }
+  onClose(){this.contentEl.empty()}
+}
+class ConfigTransferModal extends Modal {
+  constructor(app,plugin,mode){super(app);Object.assign(this,{plugin,mode});this.password="";this.confirm="";this.text="";this.lan=false;this.preferences=true;this.config=null;this.busy=false;}
+  onOpen(){const c=this.contentEl;c.createEl("h2",{text:this.mode==="export"?"导出加密配置":this.mode==="restore"?"撤销上次配置导入":"导入加密配置"});
+    if(this.mode==="export"){
+      c.createEl("p",{text:"导出连接地址、认证信息和使用偏好。文件加密后可传给自己的新设备。"});
+      new Setting(c).setName("包含局域网地址").setDesc("新设备默认使用公网连接；同一局域网可以勾选。").addToggle(t=>t.setValue(false).onChange(v=>this.lan=v));
+      new Setting(c).setName("包含上传和清理偏好").addToggle(t=>t.setValue(true).onChange(v=>this.preferences=v));
+    }else if(this.mode==="import"){
+      c.createEl("p",{text:"选择配置文件或粘贴加密文本，解密预览后再应用。已有附件记录与待处理任务会保留。"});
+      const picker=c.createEl("input",{attr:{type:"file",accept:".json,application/json"}});
+      picker.addEventListener("change",async()=>{const f=picker.files?.[0];if(!f)return;if(f.size>262144){new Notice("配置文件过大");return}this.text=await f.text();this.textarea.value=this.text;this.config=null;this.preview.empty()});
+      const files=this.app.vault.getFiles().filter(f=>/^private-share-config-.*\.json$/.test(f.name));
+      if(files.length)new Setting(c).setName("从 Vault 选择").addDropdown(d=>{d.addOption("","请选择配置文件");for(const f of files)d.addOption(f.path,f.path);d.onChange(async v=>{if(!v)return;const f=this.app.vault.getAbstractFileByPath(v);if(f.stat.size>262144){new Notice("配置文件过大");return}this.text=await this.app.vault.read(f);this.textarea.value=this.text;this.config=null;this.preview.empty()})});
+      this.textarea=c.createEl("textarea",{cls:"private-share-config-text",attr:{placeholder:"也可以在这里粘贴完整的加密配置",rows:"5"}});
+      this.textarea.addEventListener("input",()=>{this.text=this.textarea.value;this.config=null;this.preview.empty()});
+    }else c.createEl("p",{text:"输入上次导入时使用的密码，恢复导入前的连接配置。"});
+    new Setting(c).setName(this.mode==="export"?"导出密码":"配置密码").addText(t=>{t.inputEl.type="password";t.onChange(v=>{this.password=v;this.config=null;if(this.preview)this.preview.empty()})});
+    if(this.mode==="export")new Setting(c).setName("再次输入密码").addText(t=>{t.inputEl.type="password";t.onChange(v=>this.confirm=v)});
+    this.preview=c.createDiv();this.result=c.createDiv();
+    const action=new Setting(c).addButton(b=>b.setButtonText("取消").onClick(()=>this.close()));
+    if(this.mode==="export")action.addButton(b=>b.setButtonText("生成加密配置").setCta().onClick(()=>this.run(b,async()=>{
+      if(this.password!==this.confirm)throw Error("两次密码不一致");
+      this.text=await encryptProfile(portableConfig(this.plugin.settings,{lan:this.lan,preferences:this.preferences}),this.password,this.plugin.manifest.version);
+      this.result.empty();this.result.createEl("p",{text:"加密配置已生成，请保存文件或复制加密文本。"});
+      new Setting(this.result).addButton(v=>v.setButtonText("保存到 Vault").onClick(()=>this.run(v,async()=>{const name="private-share-config-"+new Date().toISOString().replace(/[:.]/g,"-")+".json";await this.app.vault.create(name,this.text);new Notice("已保存："+name)}))).addButton(v=>v.setButtonText("复制加密配置").onClick(async()=>{try{await navigator.clipboard.writeText(this.text);new Notice("加密配置已复制")}catch{new Notice("复制失败，请保存到 Vault")}}));
+    })));
+    else{
+      action.addButton(b=>b.setButtonText("解密预览").onClick(()=>this.run(b,async()=>{
+        const text=this.mode==="restore"?await this.app.vault.adapter.read(this.plugin.profileBackupPath()):this.text;
+        this.config=await decryptProfile(text,this.password);this.preview.empty();
+        for(const key of ["serverUrl","alistPublicUrl","localUploadUrl","alistLanUrl","alistRootPath"])if(Object.prototype.hasOwnProperty.call(this.config,key))new Setting(this.preview).setName({serverUrl:"分享服务",alistPublicUrl:"AList 公网",localUploadUrl:"局域网上传",alistLanUrl:"AList 局域网",alistRootPath:"上传目录"}[key]).setDesc(this.config[key]||"未配置");
+        this.preview.createEl("p",{text:"认证信息已解密，将在确认后应用；不显示明文。"});
+        for(const key of PROFILE_PREFS)if(Object.prototype.hasOwnProperty.call(this.config,key))new Setting(this.preview).setName({alistUseDateFolders:"按日期存储",alistAutoUpload:"自动上传",alistDeleteRemoteOnNoteDelete:"删除笔记时清理附件",alistDeleteRemoteOnLinkRemove:"删除引用时清理附件",alistConfirmRemoteDelete:"清理前确认"}[key]).setDesc(this.config[key]?"开启":"关闭");
+      })));
+      action.addButton(b=>b.setButtonText(this.mode==="restore"?"确认恢复":"确认应用").setCta().onClick(()=>this.run(b,async()=>{
+        if(!this.config)throw Error("请先解密预览配置");
+        const imported=this.config;await this.plugin.applyPortableConfig(imported,this.password,{restore:this.mode==="restore"});
+        this.result.empty();this.result.createEl("p",{text:"配置已保存，正在检查连接…"});
+        let connected=false;try{await this.plugin.api("/api/shares","GET");connected=true}catch{}
+        if(connected)await this.plugin.syncAllSharesFromServer({silent:true});
+        this.result.empty();this.result.createEl("p",{text:connected?"分享服务已连接；已同步 "+Object.keys(this.plugin.settings.shares||{}).length+" 条分享记录。":"配置已保存，分享服务暂时连接失败。可以关闭弹窗后重试或撤销导入。"});
+        const alist=normalizeBase(this.plugin.settings.alistPublicUrl||this.plugin.settings.alistLanUrl);
+        if(alist){try{const r=await requestUrl({url:alist+"/api/public/settings",throw:false});this.result.createEl("p",{text:r.status===200?"AList 服务可访问。":"AList 暂时无法访问，请检查地址。"})}catch{this.result.createEl("p",{text:"AList 暂时无法访问，请检查网络。"})}}
+        this.config=null;this.preview.empty();new Notice("配置已应用");
+      })));
+    }
+  }
+  async run(button,fn){if(this.busy)return;this.busy=true;button.setDisabled(true);try{await fn()}catch(e){new Notice(e.message||"操作失败，请重试")}finally{this.busy=false;button.setDisabled(false)}}
+  onClose(){this.password="";this.confirm="";this.config=null;this.text="";this.contentEl.empty()}
+}
+
+class ShareManagerModal extends Modal {
+  constructor(app,plugin){super(app);this.plugin=plugin;}
+  onOpen(){this.render()}
+  render(){const c=this.contentEl;c.empty();c.createEl("h2",{text:"Private Share 管理"});const entries=Object.entries(this.plugin.settings.shares||{});
+    if(!entries.length){c.createEl("p",{text:"当前没有分享记录。"});return}
+    c.createEl("p",{text:"共 "+entries.length+" 篇分享。修改有效期和删除分享无需打开原笔记。",cls:"private-share-muted"});
+    const list=c.createDiv({cls:"private-share-manager"});
+    for(const [notePath,share] of entries){const row=list.createDiv({cls:"private-share-manager-row"}),info=row.createDiv({cls:"private-share-manager-info"});info.createEl("strong",{text:share.title||notePath});info.createEl("div",{text:notePath,cls:"private-share-muted"});
+      const badges=info.createDiv({cls:"private-share-badges"});if(share.passwordProtected)badges.createSpan({text:"密码保护",cls:"private-share-badge"});badges.createSpan({text:share.expiresAt?"到期："+formatTime(share.expiresAt):"永久有效",cls:"private-share-badge"});if(share.discussionEnabled)badges.createSpan({text:"客户讨论",cls:"private-share-badge"});
+      const actions=row.createDiv({cls:"private-share-manager-actions"});
+      const button=(text,fn)=>{const b=actions.createEl("button",{text});b.addEventListener("click",async()=>{b.disabled=true;try{await fn()}catch(e){new Notice(e.message||"操作失败")}finally{b.disabled=false}});return b;};
+      button("复制链接",async()=>{await this.plugin.copyResolvedShareUrl(notePath,share,false);new Notice("分享链接已复制")});
+      button("修改到期时间",()=>new ShareExpiryModal(this.app,this.plugin,notePath,share,()=>this.render()).open());
+      const file=this.app.vault.getAbstractFileByPath(notePath);if(file instanceof TFile)button("更新正文",()=>{this.close();this.plugin.openShareOptions(file,"update")});
+      if(share.discussionEnabled){button("客户链接",()=>new InviteManagerModal(this.app,this.plugin,notePath,share).open());button("查看讨论",()=>new DiscussionModal(this.app,this.plugin,notePath,share).open());}
+      button("删除分享",async()=>{const yes=await new Promise(resolve=>new ActionConfirmModal(this.app,"删除分享","此笔记的所有历史分享和客户链接将失效，相关讨论会删除。Vault 原笔记和 AList/R2 自动上传的原附件会保留。",resolve).open());if(yes&&await this.plugin.unshareByPath(notePath,false)){this.render();new Notice("分享已删除")}}).addClass("mod-warning");
+    }
+  }
+  onClose(){this.contentEl.empty()}
+}
+
+
 class PrivateSharePlugin extends Plugin {
+  profileBackupPath() {return this.app.vault.configDir+"/plugins/"+this.manifest.id+"/config-before-import.json";}
+  async applyPortableConfig(config,password,options={}) {
+    config=validatePortableConfig(config);
+    if(!options.restore&&(!config.serverUrl||!config.apiToken))throw Error("配置缺少分享服务地址或 API Token");
+    if(this.configTransferRunning||this.alistUploadJobs?.size||this.alistCleanupRunning||this.fullShareSyncRunning||this.alistAutoRunning?.size)throw Error("上传、清理或同步正在进行，请稍后再试");
+    const hasRecords=Object.keys(this.settings.shares||{}).length||Object.keys(this.settings.alistAssets||{}).length||Object.keys(this.settings.pendingAListUploads||{}).length;
+    const changedService=["serverUrl","alistPublicUrl","apiToken"].some(k=>Object.prototype.hasOwnProperty.call(config,k)&&this.settings[k]&&normalizeBase(this.settings[k])!==normalizeBase(config[k]));
+    if(hasRecords&&changedService&&!options.restore)throw Error("当前设备已有分享或附件记录，不能直接导入另一服务的配置；请在新的 Vault 中配置");
+    this.configTransferRunning=true;this.shareStateRevision=(this.shareStateRevision||0)+1;
+    const before=this.settings;
+    try{
+      if(!options.restore){const backup=await encryptProfile(portableConfig(before),password,this.manifest.version);await this.app.vault.adapter.write(this.profileBackupPath(),backup);}
+      this.settings={...this.settings,...config};
+      try{await this.saveData(this.settings)}catch{this.settings=before;throw Error("配置保存失败，已恢复原设置")}
+      this.settingsTab?.display();
+    }finally{this.configTransferRunning=false;}
+  }
+  async changeShareExpiry(notePath,share,expiresAt) {
+    if(expiresAt!==null&&(!Number.isFinite(Date.parse(expiresAt))||Date.parse(expiresAt)<=Date.now()))throw Error("到期时间必须在未来");
+    const claimed=await this.claimManageShareForPath(notePath,share,true);
+    if(!claimed)throw Error("服务端已没有该分享，本机记录已清理");
+    const data=await this.api("/api/share/"+encodeURIComponent(claimed.shareId)+"/expiry","PATCH",{expiresAt},claimed.editToken);
+    const stored=this.settings.shares[notePath];
+    if(stored&&stored.shareId===claimed.shareId){stored.expiresAt=data.expiresAt||null;await this.saveData(this.settings);}
+    return data;
+  }
+
   async onload() {
     this.settings = Object.assign(
       {},
@@ -932,9 +969,9 @@ class PrivateSharePlugin extends Plugin {
       }
     });
 
-    this.addSettingTab(
-      new PrivateShareSettingTab(this.app, this)
-    );
+    for(const [id,name,mode] of [["export-encrypted-config","导出加密配置","export"],["import-encrypted-config","导入加密配置","import"]])this.addCommand({id,name,callback:()=>new ConfigTransferModal(this.app,this,mode).open()});
+    this.settingsTab = new PrivateShareSettingTab(this.app, this);
+    this.addSettingTab(this.settingsTab);
 
     this.addCommand({
       id: "share-current-note",
@@ -1280,7 +1317,7 @@ class PrivateSharePlugin extends Plugin {
   }
 
   validateAListSettings(showNotice = true) {
-    const lan = normalizeBase(this.settings.alistLanUrl);
+    const lan = normalizeBase(this.settings.alistLanUrl || this.settings.alistPublicUrl);
     const publicBase = normalizeBase(
       this.settings.alistPublicUrl
     );
@@ -1320,7 +1357,7 @@ class PrivateSharePlugin extends Plugin {
     ).trim();
     if (configured) return configured;
 
-    const lan = normalizeBase(this.settings.alistLanUrl);
+    const lan = normalizeBase(this.settings.alistLanUrl || this.settings.alistPublicUrl);
     const username = String(
       this.settings.alistUsername || ""
     ).trim();
@@ -1456,7 +1493,7 @@ class PrivateSharePlugin extends Plugin {
     token,
     maxAttempts = 8
   ) {
-    const lan = normalizeBase(this.settings.alistLanUrl);
+    const lan = normalizeBase(this.settings.alistLanUrl || this.settings.alistPublicUrl);
     const normalized = normalizeRemotePath(remotePath);
     const slash = normalized.lastIndexOf("/");
     const parentPath =
@@ -1586,7 +1623,7 @@ class PrivateSharePlugin extends Plugin {
     );
   }
   async ensureAListDirectory(remotePath, token) {
-    const lan = normalizeBase(this.settings.alistLanUrl);
+    const lan = normalizeBase(this.settings.alistLanUrl || this.settings.alistPublicUrl);
     const normalized = normalizeRemotePath(remotePath);
     const parts = normalized.split("/").filter(Boolean);
     if (parts.length <= 1) return;
@@ -1699,6 +1736,7 @@ class PrivateSharePlugin extends Plugin {
   }
 
   async uploadCurrentNoteAttachmentsToAList(file, runOptions = {}) {
+    if (this.configTransferRunning) return false;
     this.alistUploadJobs ||= new Map();
     if (this.alistUploadJobs.has(file.path)) return this.alistUploadJobs.get(file.path);
     const job = this.performAListUpload(file, runOptions);
@@ -1963,6 +2001,7 @@ class PrivateSharePlugin extends Plugin {
   }
 
   async cleanupRemovedAListAssetLinks(file) {
+    if (this.configTransferRunning) return false;
     if (this.settings.alistDeleteRemoteOnLinkRemove === false) return;
     if (this.alistAutoRunning?.has(file.path) || this.alistUploadJobs?.has(file.path)) return;
     const assets = this.settings.alistAssets?.[file.path] || [];
@@ -1991,6 +2030,7 @@ class PrivateSharePlugin extends Plugin {
   }
 
   async retryAListCleanup() {
+    if (this.configTransferRunning) return false;
     if (this.alistCleanupRunning) return;
     this.alistCleanupRunning = true;
     try {
@@ -2026,7 +2066,7 @@ class PrivateSharePlugin extends Plugin {
   }
 
   async deleteAListRemoteAsset(remotePath, token) {
-    const lan = normalizeBase(this.settings.alistLanUrl);
+    const lan = normalizeBase(this.settings.alistLanUrl || this.settings.alistPublicUrl);
     const normalized = normalizeRemotePath(remotePath);
     const slash = normalized.lastIndexOf("/");
     const dir =
@@ -2136,7 +2176,7 @@ class PrivateSharePlugin extends Plugin {
   }
 
   async preparePayload(file, options, existing) {
-    const useAList = this.settings.alistAutoUpload !== false && !!this.settings.alistLanUrl;
+    const useAList = this.settings.alistAutoUpload !== false && !!(this.settings.alistLanUrl || this.settings.alistPublicUrl);
     if (useAList) await this.uploadCurrentNoteAttachmentsToAList(file, {silentNoop:true});
     let markdown = await this.app.vault.read(file);
     const attachments = [];
@@ -2754,6 +2794,7 @@ class PrivateSharePlugin extends Plugin {
   }
 
   async syncAllSharesFromServer(options = {}) {
+    if(this.configTransferRunning)return this.settings.shares||{};
     const silent = options.silent !== false;
     if (this.fullShareSyncRunning) return this.settings.shares || {};
     this.fullShareSyncRunning = true;
@@ -2820,6 +2861,7 @@ class PrivateSharePlugin extends Plugin {
     notePath,
     options = {}
   ) {
+    if (this.configTransferRunning) return this.settings.shares[notePath] || null;
     const silent = options.silent !== false;
     const existing =
       this.settings.shares[notePath] || null;
@@ -3042,6 +3084,8 @@ class PrivateShareSettingTab extends PluginSettingTab {
   display() {
     const c = this.containerEl;
     c.empty();
+    new Setting(c).setName("配置导入 / 导出").setDesc("用加密文件配置新设备，保留本机分享和附件记录。").addButton(b=>b.setButtonText("导出配置").onClick(()=>new ConfigTransferModal(this.app,this.plugin,"export").open())).addButton(b=>b.setButtonText("导入配置").onClick(()=>new ConfigTransferModal(this.app,this.plugin,"import").open()));
+    new Setting(c).setName("撤销上次配置导入").setDesc("使用上次导入密码恢复原连接配置。").addButton(b=>b.setButtonText("恢复原配置").onClick(()=>new ConfigTransferModal(this.app,this.plugin,"restore").open()));
 
     new Setting(c)
       .setName("\u5206\u4eab\u670d\u52a1\u5668")
