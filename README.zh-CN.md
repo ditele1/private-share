@@ -1,5 +1,8 @@
 # Private Share for Obsidian
 
+> 0.6.0：新附件仅通过 Worker 公网直传 R2，取消 AList 上传及 OpenWrt 内网上传回退。首次启用时已有的本地附件留在本地，分享网页显示占位提示，不补传。下文旧上传配置说明仅适用于旧版本；已有公网附件链接继续兼容。
+
+
 [English](README.md)
 
 Private Share 是一个轻量级 Obsidian 单页分享插件。

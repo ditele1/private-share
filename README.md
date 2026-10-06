@@ -1,5 +1,8 @@
 # Private Share for Obsidian
 
+> Version 0.6.0: New attachments use Worker/R2 direct upload only. AList and home-server attachment uploads are retired. Local files present at first activation stay local; shared pages show a placeholder for them. Historical upload instructions below apply to older versions. Existing public links remain compatible.
+
+
 [中文说明](README.zh-CN.md)
 
 A lightweight Obsidian plugin for sharing a single Markdown note through a self-hosted sharing service.

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.0
+
+- Upload new attachments directly to Cloudflare Worker/R2 over HTTPS using scoped, expiring tickets; no R2 secrets are stored in the plugin.
+- Remove AList upload and home-server/LAN attachment-upload fallbacks. AList settings remain only for legacy file lookup and cleanup.
+- Snapshot existing local attachment paths at first activation. They stay local and are never automatically backfilled; shared pages show a local-only placeholder.
+- Serialize uploads across notes to bound memory and avoid competing large-file transfers.
+- Use 8 MiB multipart chunks with retry, saved progress and idempotent completion. Desktop reads chunks from disk; mobile uploads are limited to 128 MiB (desktop: 2 GiB).
+- Verify short-link availability before replacing note content. Reuse verified, unchanged managed attachments across notes on the same device.
+- Keep backend ownership on cleanup records; direct uploads are deleted only after Vault and published-share reference checks. Failed deletion retains its record.
+- Include upload backend in encrypted configuration migration; cutover exclusions and upload sessions remain device-local.
+
+
 ## 0.5.9
 
 - Add password-encrypted configuration import/export, mobile file/text transfer, preview and rollback.
