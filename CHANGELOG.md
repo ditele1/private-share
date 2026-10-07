@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.1
+
+- Upload attachments only on desktop through an explicitly configured LAN AList endpoint; mobile never uploads attachment bytes.
+- Wait when the home endpoint is unavailable; remove Worker upload calls and public-upload fallbacks. Existing Worker links and ownership records remain compatible.
+- Discover referenced local files on startup, Vault creation/attachment changes, metadata resolution and every five minutes. Older local cutover exclusions no longer prevent desktop uploads.
+- Serialize file uploads, reuse confirmed AList objects across notes and retain pending records when short-link registration fails.
+- Keep local links until upload and stable short-link registration succeed; mobile shared pages show a waiting-for-desktop placeholder.
+- Refresh existing published notes after automatic uploads while preserving expiry, password and discussion settings; never recreate a revoked share.
+
+
 ## 0.6.0
 
 - Upload new attachments directly to Cloudflare Worker/R2 over HTTPS using scoped, expiring tickets; no R2 secrets are stored in the plugin.

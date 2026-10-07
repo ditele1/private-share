@@ -1,6 +1,6 @@
 # Private Share for Obsidian
 
-> Version 0.6.0: New attachments use Worker/R2 direct upload only. AList and home-server attachment uploads are retired. Local files present at first activation stay local; shared pages show a placeholder for them. Historical upload instructions below apply to older versions. Existing public links remain compatible.
+> Version 0.6.1: Only desktop uploads attachments, through a configured LAN AList endpoint backed by R2. Mobile keeps files local for Vault synchronization. Desktop checks referenced local files at startup, after synchronization and every five minutes, waiting while the home endpoint is unavailable. Successful automatic uploads update stable short links and existing shares. Earlier cutover exclusions no longer apply. Existing public links remain compatible.
 
 
 [中文说明](README.zh-CN.md)

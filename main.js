@@ -1,6 +1,7 @@
 
 const {
   Plugin,
+  Platform,
   PluginSettingTab,
   Setting,
   Notice,
@@ -13,7 +14,7 @@ const DEFAULT_SETTINGS = {
   serverUrl: "",
   localUploadUrl: "",
   apiToken: "",
-  attachmentUploadBackend: "worker",
+  attachmentUploadBackend: "alist",
   alistLanUrl: "",
   alistPublicUrl: "",
   alistUsername: "",
@@ -736,7 +737,7 @@ const PROFILE_AAD = "obsidian-private-share-config:1:AES-256-GCM:PBKDF2-SHA256:6
 function portableConfig(settings, options={}) {
   const out={};
   for(const [key,type] of Object.entries(PROFILE_FIELDS)){
-    if(key==="localUploadUrl")continue;
+
     if(options.lan===false&&PROFILE_LAN.includes(key))continue;
     if(options.preferences===false&&PROFILE_PREFS.includes(key))continue;
     if(typeof settings[key]===type)out[key]=settings[key];
@@ -913,7 +914,16 @@ class PrivateSharePlugin extends Plugin {
       await this.loadData()
     );
     if (!this.settings.shares) this.settings.shares = {};
-    this.app.workspace.onLayoutReady(()=>this.initializeDirectCutover().catch(()=>new Notice('本地附件保护清单保存失败，已暂停附件上传')));
+    this.app.workspace.onLayoutReady(async()=>{
+      this.settings.attachmentUploadBackend='alist';
+      await this.saveData(this.settings);
+      this.scheduleDesktopUploadScan();
+    });
+    this.registerInterval(window.setInterval(()=>this.scanDesktopAttachments(),300000));
+    this.registerEvent(this.app.metadataCache.on('resolved',()=>this.scheduleDesktopUploadScan()));
+    this.registerEvent(this.app.vault.on('create',()=>this.scheduleDesktopUploadScan()));
+    this.register(()=>{if(this.desktopScanTimer)window.clearTimeout(this.desktopScanTimer);this.desktopUploadsStopped=true;});
+    this.addCommand({id:'upload-synced-local-attachments',name:'电脑检查并上传已同步的本地附件',callback:()=>this.scanDesktopAttachments({manual:true})});
     this.alistAutoTimers = new Map();
     this.alistAutoRunning = new Set();
     this.alistReferenceCleanupTimers = new Map();
@@ -1267,7 +1277,7 @@ class PrivateSharePlugin extends Plugin {
         "modify",
         (file) => {
           if (!(file instanceof TFile)) return;
-          if (file.extension !== "md") return;
+          if (file.extension !== "md") {this.scheduleDesktopUploadScan();return;}
           this.scheduleAListReferenceCleanup(file);
           if (this.settings.alistAutoUpload === false) return;
           this.scheduleAListAutoUpload(file);
@@ -1289,6 +1299,7 @@ class PrivateSharePlugin extends Plugin {
     );
   }
   scheduleAListAutoUpload(file) {
+    if(this.isMobileDevice())return;
     if (!(file instanceof TFile) || file.extension !== "md")
       return;
 
@@ -1317,6 +1328,89 @@ class PrivateSharePlugin extends Plugin {
     }, 2500);
 
     this.alistAutoTimers.set(file.path, timer);
+  }
+
+  isMobileDevice() { return Platform?.isMobile===true; }
+
+  desktopAListBase() {return this.privateLanBase(this.settings.alistLanUrl);}
+  privateLanBase(value) {
+    if(this.isMobileDevice())return '';
+    try{
+      const u=new URL(normalizeBase(value));
+      const h=u.hostname.toLowerCase(),parts=h.split('.').map(Number);
+      const ipv4=/^\d+\.\d+\.\d+\.\d+$/.test(h)&&parts.every(n=>n>=0&&n<=255);
+      const privateHost=ipv4&&(parts[0]===10||parts[0]===127||parts[0]===192&&parts[1]===168||parts[0]===172&&parts[1]>=16&&parts[1]<=31);
+      if(!['http:','https:'].includes(u.protocol)||u.username||u.password||u.search||u.hash||u.pathname!=='/'||!(privateHost||h==='localhost'||h==='[::1]'||/^\[f[cd][0-9a-f:]+\]$/.test(h)||/\.(local|lan)$/.test(h)))return '';
+      return u.origin;
+    }catch{return '';}
+  }
+
+  async desktopAListAvailable() {
+    const base=this.desktopAListBase();if(!base)return false;
+    if(this.desktopProbe?.base===base&&Date.now()<this.desktopProbe.until)return this.desktopProbe.ok;
+    const ok=await new Promise(resolve=>{
+      let settled=false,req;
+      const done=value=>{if(settled)return;settled=true;clearTimeout(timer);resolve(value);};
+      const timer=setTimeout(()=>{req?.destroy();done(false);},4000);
+      try{req=require(base.startsWith('https:')?'https':'http').get(base+'/api/public/settings',res=>{
+        let body='';res.on('data',chunk=>{body+=chunk;if(body.length>262144){req.destroy();done(false);}});
+        res.on('error',()=>done(false));res.on('end',()=>{try{done(res.statusCode===200&&JSON.parse(body).code===200);}catch{done(false);}});
+      });req.on('error',()=>done(false));}catch{done(false);}
+    });
+    this.desktopProbe={base,ok,until:Date.now()+15000};return ok;
+  }
+
+  scheduleDesktopUploadScan() {
+    if(this.isMobileDevice()||this.settings.alistAutoUpload===false||this.desktopUploadsStopped)return;
+    if(this.desktopScanTimer)window.clearTimeout(this.desktopScanTimer);
+    this.desktopScanTimer=window.setTimeout(()=>{this.desktopScanTimer=null;this.scanDesktopAttachments();},4000);
+  }
+
+  hasLocalAttachmentLinks(text,file) {
+    const refs=[...text.matchAll(/!\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g)].map(m=>m[1]);
+    for(const m of text.matchAll(/!?\[[^\]]*\]\(([^)]+)\)/g))if(!/^(?:https?:|data:|app:|obsidian:|mailto:)/i.test(m[1].trim()))refs.push(m[1].trim().replace(/^<|>$/g,''));
+    return refs.some(raw=>{let link=raw.split('#')[0].trim();try{link=decodeURIComponent(link);}catch{}const target=this.app.metadataCache.getFirstLinkpathDest(link,file.path);return target instanceof TFile&&target.extension!=='md';});
+  }
+
+  async scanDesktopAttachments(options={}) {
+    if(this.isMobileDevice()){if(options.manual)new Notice('手机不上传附件，请将笔记和附件同步到电脑');return false;}
+    if(this.desktopScanRunning||this.configTransferRunning||this.desktopUploadsStopped||this.settings.alistAutoUpload===false&&!options.manual)return false;
+    this.desktopScanRunning=true;
+    try{
+      if(!await this.desktopAListAvailable()){if(options.manual)new Notice('家里的 AList 暂不可用，附件继续保留本地，稍后自动重试');return false;}
+      let uploaded=0;
+      for(const file of this.app.vault.getMarkdownFiles()){
+        if(this.desktopUploadsStopped)break;
+        if(this.hasLocalAttachmentLinks(await this.app.vault.read(file),file)){
+          const changed=await this.uploadCurrentNoteAttachmentsToAList(file,{automatic:true,silentNoop:true});
+          if(changed)uploaded++;
+        }
+      }
+      await this.retryUploadedShareRefresh();
+      if(options.manual)new Notice('检查完成，已处理 '+uploaded+' 篇笔记');return uploaded>0;
+    }catch{if(options.manual)new Notice('附件检查未完成，本地文件保留，稍后重试');return false;}
+    finally{this.desktopScanRunning=false;}
+  }
+
+  async retryUploadedShareRefresh() {
+    if(this.isMobileDevice()||this.uploadedShareRefreshRunning)return;
+    this.uploadedShareRefreshRunning=true;
+    try{
+      for(const notePath of Object.keys(this.settings.pendingUploadedShareRefresh||{})){
+        if(this.desktopUploadsStopped)break;
+        const file=this.app.vault.getAbstractFileByPath(notePath);
+        if(!(file instanceof TFile)){delete this.settings.pendingUploadedShareRefresh[notePath];continue;}
+        try{
+          const existing=await this.claimManageShareForPath(notePath,this.settings.shares[notePath],true);
+          if(existing){
+            const prepared=await this.preparePayload(file,{passwordProtected:existing.passwordProtected,expiryMode:'keep',discussionEnabled:existing.discussionEnabled},existing,{skipUpload:true});
+            await this.api('/api/update/'+encodeURIComponent(existing.shareId),'PUT',prepared.payload,existing.editToken);
+          }
+          delete this.settings.pendingUploadedShareRefresh[notePath];
+        }catch{ /* Keep only the refresh marker; never recreate a revoked share. */ }
+      }
+      await this.saveData(this.settings);
+    }finally{this.uploadedShareRefreshRunning=false;}
   }
 
   validateAListSettings(showNotice = true) {
@@ -1448,7 +1542,7 @@ class PrivateSharePlugin extends Plugin {
   }
 
   async getMediaProxyUrl(upstreamUrl, remotePath = "") {
-    const server = normalizeBase(this.settings.serverUrl);
+    const server = this.privateLanBase(this.settings.localUploadUrl)||normalizeBase(this.settings.serverUrl);
     const token = String(this.settings.apiToken || "").trim();
     if (!server || !token) return "";
 
@@ -1626,6 +1720,7 @@ class PrivateSharePlugin extends Plugin {
     );
   }
   async uploadCurrentNoteAttachmentsToAList(file, runOptions = {}) {
+    if(this.isMobileDevice()){if(!runOptions.automatic&&!runOptions.silentNoop)new Notice('手机不上传附件，请同步到电脑后上传');return false;}
     if (this.configTransferRunning) return false;
     this.alistUploadJobs ||= new Map();
     if (this.alistUploadJobs.has(file.path)) return this.alistUploadJobs.get(file.path);
@@ -1634,107 +1729,96 @@ class PrivateSharePlugin extends Plugin {
     try { return await job; } finally { this.alistUploadJobs.delete(file.path); }
   }
 
-  usesDirectR2() { return true; }
+  async ensureAListDirectory(remotePath, token) {
+    const lan = this.desktopAListBase();
+    const normalized = normalizeRemotePath(remotePath);
+    const parts = normalized.split("/").filter(Boolean);
+    if (parts.length <= 1) return;
 
-  async initializeDirectCutover() {
-    this.settings.attachmentUploadBackend='worker';
-    if(!this.settings.directCutoverComplete){
-      this.settings.localOnlyAttachmentPaths=Object.fromEntries(this.app.vault.getFiles().filter(f=>f.extension!=='md').map(f=>[f.path,true]));
-      this.settings.directCutoverAt=Date.now();
-      this.settings.directCutoverComplete=true;
-      try{await this.saveData(this.settings);}catch(e){this.settings.directCutoverComplete=false;throw e;}
-    }
-  }
+    // The first segment is normally the AList mount itself
+    // (for example /Obsidian), so only create folders below it.
+    let current = "/" + parts[0];
+    for (let i = 1; i < parts.length; i++) {
+      current += "/" + parts[i];
+      const response = await requestUrl({
+        url: lan + "/api/fs/mkdir",
+        method: "POST",
+        headers: {
+          Authorization: token,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ path: current }),
+        throw: false,
+      });
 
-  localOnlyAttachment(target) {
-    return !this.settings.directCutoverComplete||this.settings.localOnlyAttachmentPaths?.[target.path]===true||target.stat.mtime<=this.settings.directCutoverAt;
-  }
+      let data = {};
+      try {
+        data =
+          response.json ||
+          JSON.parse(response.text || "{}");
+      } catch (_) {}
 
-  async directRequest(base, route, ticket, method = 'POST', body, partNumber) {
-    for(let attempt=0;attempt<4;attempt++){
-      try{
-        const binary=body instanceof ArrayBuffer;
-        const headers={'X-Upload-Ticket':ticket};
-        if(body!==undefined)headers['Content-Type']=binary?'application/octet-stream':'application/json';
-        if(partNumber)headers['X-Part-Number']=String(partNumber);
-        const r=await requestUrl({url:base+route,method,headers,body:body===undefined?undefined:binary?body:JSON.stringify(body),throw:false});
-        if(r.status>=200&&r.status<300)return r.json;
-        if(r.status<500&&![408,429].includes(r.status))throw Object.assign(new Error('R2 上传请求失败：HTTP '+r.status),{permanent:true});
-        throw new Error('R2 上传暂时失败：HTTP '+r.status);
-      }catch(e){if(e.permanent||attempt===3)throw e;await new Promise(resolve=>window.setTimeout(resolve,1000*2**attempt));}
-    }
-  }
+      const message = String(
+        (data && (data.message || data.error)) || ""
+      );
+      const alreadyExists =
+        /exist|already|存在/i.test(message);
+      const ok =
+        (response.status >= 200 &&
+          response.status < 300 &&
+          (!data.code || data.code === 200)) ||
+        alreadyExists;
 
-  async uploadFileToDirectR2(target) {
-    this.directFileJobs ||= new Map();
-    const identity=target.path+':'+target.stat.mtime+':'+target.stat.size;
-    if(this.directFileJobs.has(identity))return this.directFileJobs.get(identity);
-    // Serialize files across notes to bound mobile memory and avoid competing video uploads.
-    const job=(this.directUploadTail||Promise.resolve()).catch(()=>{}).then(()=>this.performDirectR2Upload(target,identity));
-    this.directUploadTail=job.then(()=>{},()=>{});
-    this.directFileJobs.set(identity,job);
-    try{return await job;}finally{this.directFileJobs.delete(identity);}
-  }
-
-  async performDirectR2Upload(target,identity) {
-    const size=target.stat.size,mtime=target.stat.mtime;
-    if(!Number.isSafeInteger(size)||size<1||size>2*1024**3)throw new Error('直传附件必须介于 1 字节和 2 GiB 之间');
-    if(this.localOnlyAttachment(target))throw new Error('切换前的附件仅保留在本地，不上传');
-    const adapter=this.app.vault.adapter;
-    const fullPath=typeof adapter.getFullPath==='function'?adapter.getFullPath(target.path):null;
-    if(!fullPath&&size>128*1024**2)throw new Error('手机暂支持最多 128 MiB；更大的附件请从电脑分片上传');
-    const previous=Object.values(this.settings.alistAssets||{}).flat().find(a=>a.backend==='worker'&&a.uploadIdentity===identity&&!a.pendingDelete);
-    if(previous){
-      const r=await requestUrl({url:previous.publicUrl,method:'HEAD',throw:false});
-      if(r.status===200&&Number(r.headers['content-length'])===size)return {...previous,uploadIdentity:identity};
-      if(r.status!==404)throw new Error('无法核实已有附件，已保留本地链接');
-    }
-    this.settings.pendingAListUploads ||= {};
-    const uploadKey='worker:'+identity;
-    let pending=this.settings.pendingAListUploads[uploadKey];
-    if(!pending){const bytes=crypto.getRandomValues(new Uint8Array(16));pending={backend:'worker',requestId:[...bytes].map(n=>n.toString(16).padStart(2,'0')).join(''),parts:[]};this.settings.pendingAListUploads[uploadKey]=pending;await this.saveData(this.settings);}
-    if(!pending.ticket||pending.expiresAt<Date.now()+60000){
-      const fresh=await this.api('/api/media/upload-ticket','POST',{requestId:pending.requestId,name:target.name,size});
-      const u=new URL(fresh.base);
-      if(u.protocol!=='https:'||u.username||u.password||u.pathname!=='/'||u.search||u.hash||!/^private-share-direct\//.test(fresh.key)||fresh.chunk!==8*1024**2)throw new Error('服务端返回了无效的 R2 上传配置');
-      Object.assign(pending,fresh,{session:null,parts:[]});await this.saveData(this.settings);
-    }
-    let done=await this.directRequest(pending.base,'/upload/status',pending.ticket);
-    if(!done.done){
-      if(!pending.session){const started=await this.directRequest(pending.base,'/upload/start',pending.ticket);if(started.done)done=started;else{pending.session=started.session;await this.saveData(this.settings);}}
-      if(!done.done){
-        const total=Math.ceil(size/pending.chunk);let handle,mobile;
-        try{
-          if(fullPath)handle=await require('fs').promises.open(fullPath,'r');
-          else mobile=await this.app.vault.readBinary(target);
-          for(let number=pending.parts.length+1;number<=total;number++){
-            const start=(number-1)*pending.chunk,length=Math.min(pending.chunk,size-start);
-            let body;
-            if(handle){const buffer=new Uint8Array(length);let offset=0;while(offset<length){const r=await handle.read(buffer,offset,length-offset,start+offset);if(!r.bytesRead)throw new Error('附件读取不完整，请重试');offset+=r.bytesRead;}body=buffer.buffer;}
-            else body=mobile.slice(start,start+length);
-            const part=await this.directRequest(pending.base,'/upload/part',pending.session,'PUT',body,number);
-            if(part.part?.partNumber!==number||typeof part.part.etag!=='string')throw new Error('无效的分片确认');
-            pending.parts.push(part.part);await this.saveData(this.settings);
-            if(total>1)new Notice('R2 上传 '+target.name+'：'+Math.round(number/total*100)+'%',1500);
-          }
-        }finally{await handle?.close();}
-        const current=await adapter.stat(target.path);
-        if(!current||current.size!==size||current.mtime!==mtime){await this.directRequest(pending.base,'/upload/abort',pending.session).catch(()=>{});delete this.settings.pendingAListUploads[uploadKey];await this.saveData(this.settings);throw new Error('上传期间附件发生变化，已保留本地链接，请重试');}
-        done=await this.directRequest(pending.base,'/upload/complete',pending.session,'POST',{parts:pending.parts});
+      if (!ok) {
+        throw new Error(
+          message ||
+            "AList mkdir failed: HTTP " +
+              response.status
+        );
       }
     }
-    if(!done.done||done.key!==pending.key||done.size!==size||!/^[A-Za-z0-9_-]{16}$/.test(done.code||''))throw new Error('R2 上传确认不完整，本地链接保留');
-    const publicUrl=pending.base+'/m/'+done.code;
-    // KV may need time to propagate. Preserve the completed upload until its public URL works.
-    let visible=false;
-    for(let attempt=0;attempt<21;attempt++){
-      try{const r=await requestUrl({url:publicUrl,method:'GET',headers:{Range:'bytes=0-0'},throw:false});if(r.status===206&&r.headers['content-range']?.endsWith('/'+size)){visible=true;break;}}catch{}
-      if(attempt<20)await new Promise(resolve=>window.setTimeout(resolve,3000));
+  }
+
+
+  async uploadFileToAList(target,token) {
+    if(this.isMobileDevice()||!this.desktopAListBase())throw Error('附件只由电脑通过家里的 AList 上传');
+    const identity=target.path+':'+target.stat.mtime+':'+target.stat.size;
+    this.desktopFileJobs ||= new Map();
+    if(this.desktopFileJobs.has(identity))return this.desktopFileJobs.get(identity);
+    const job=(this.desktopFileTail||Promise.resolve()).catch(()=>{}).then(()=>this.performDesktopAListUpload(target,token,identity));
+    this.desktopFileTail=job.then(()=>{},()=>{});this.desktopFileJobs.set(identity,job);
+    try{return await job;}finally{this.desktopFileJobs.delete(identity);}
+  }
+
+  async performDesktopAListUpload(target,token,identity) {
+    const {size,mtime}=target.stat;
+    const base=this.desktopAListBase();if(!base||this.desktopUploadsStopped)throw Error('电脑附件上传已暂停');
+    this.settings.pendingAListUploads ||= {};
+    const uploadKey='alist:'+identity;
+    let pending=this.settings.pendingAListUploads[uploadKey];
+    const legacy=this.settings.pendingAListUploads[identity];
+    if(!pending&&legacy?.remotePath&&!legacy.backend){pending={backend:'alist',remotePath:legacy.remotePath,uploaded:true,legacyUploadKey:identity};this.settings.pendingAListUploads[uploadKey]=pending;await this.saveData(this.settings);}
+    const previous=Object.values(this.settings.alistAssets||{}).flat().find(a=>a.backend!=='worker'&&a.uploadIdentity===identity&&!a.pendingDelete);
+    if(!pending&&previous)pending={backend:'alist',remotePath:previous.remotePath,uploaded:true};
+    // Reuse a confirmed AList upload if only link registration failed.
+    if(!pending){pending={backend:'alist',remotePath:this.buildAListRemotePath(target.name),uploaded:false};this.settings.pendingAListUploads[uploadKey]=pending;await this.saveData(this.settings);}
+    if(pending.uploaded){
+      const check=await requestUrl({url:base+'/api/fs/get',method:'POST',headers:{Authorization:token,'Content-Type':'application/json'},body:JSON.stringify({path:pending.remotePath,password:''}),throw:false});
+      if(check.status!==200||check.json?.code!==200)throw Error('无法核实已有 AList 附件，已保留本地链接');
+      if(check.json.data?.size!==size)throw Error('已有 AList 附件大小不一致，已保留本地链接');
+    }else{
+      const binary=await this.app.vault.readBinary(target);
+      if(binary.byteLength!==size)throw Error('附件正在同步，请稍后重试');
+      await this.ensureAListDirectory(pending.remotePath.slice(0,pending.remotePath.lastIndexOf('/')),token);
+      const r=await requestUrl({url:base+'/api/fs/put',method:'PUT',headers:{Authorization:token,'File-Path':encodeURIComponent(pending.remotePath),'As-Task':'false','Content-Type':mimeFromName(target.name)},body:binary,throw:false});
+      if(r.status<200||r.status>=300||r.json?.code!==200)throw Error('AList 上传失败，本地附件保留');
+      pending.uploaded=true;await this.saveData(this.settings);
     }
-    if(!visible)throw new Error('R2 已上传，短链接暂未生效；稍后重试会复用文件');
-    const current=await adapter.stat(target.path);
-    if(!current||current.size!==size||current.mtime!==mtime)throw new Error('附件已变化，旧上传记录保留，请重试');
-    return {backend:'worker',remotePath:pending.remotePath,publicUrl,uploadKey,uploadIdentity:identity};
+    const current=await this.app.vault.adapter.stat(target.path);
+    if(!current||current.size!==size||current.mtime!==mtime)throw Error('附件同步过程中发生变化，本地链接保留，请重试');
+    if(this.desktopUploadsStopped)throw Error('插件已停止，已上传记录保留');
+    const publicUrl=await this.getMediaProxyUrl('',pending.remotePath);
+    return {backend:'alist',remotePath:pending.remotePath,publicUrl,uploadKey,legacyUploadKey:pending.legacyUploadKey,uploadIdentity:identity};
   }
 
   async collectVaultMediaUrls() {
@@ -1750,10 +1834,13 @@ class PrivateSharePlugin extends Plugin {
     const automatic = !!runOptions.automatic;
     const silentNoop = !!runOptions.silentNoop;
     try {
-      if(!this.settings.directCutoverComplete) return false;
+      if(this.isMobileDevice())return false;
+      if(!await this.desktopAListAvailable()){if(!automatic&&!silentNoop)new Notice('家里的 AList 暂不可用，附件继续保留本地');return false;}
       const settings=!!(this.settings.serverUrl&&this.settings.apiToken);
       if (!settings) return false;
 
+      if(!this.validateAListSettings(!automatic))return false;
+      const token=await this.getAListToken();
       let markdown = await this.app.vault.read(file);
 
       const replacements = [];
@@ -1771,7 +1858,7 @@ class PrivateSharePlugin extends Plugin {
           );
         if (
           !(target instanceof TFile) ||
-          target.extension === "md" || this.localOnlyAttachment(target)
+          target.extension === "md"
         )
           continue;
 
@@ -1784,7 +1871,7 @@ class PrivateSharePlugin extends Plugin {
             2500
           );
           }
-          uploaded=await this.uploadFileToDirectR2(target);
+          uploaded=await this.uploadFileToAList(target,token);
           seenTargets.set(target.path, uploaded);
         }
 
@@ -1828,7 +1915,7 @@ class PrivateSharePlugin extends Plugin {
           );
         if (
           !(target instanceof TFile) ||
-          target.extension === "md" || this.localOnlyAttachment(target)
+          target.extension === "md"
         )
           continue;
 
@@ -1841,7 +1928,7 @@ class PrivateSharePlugin extends Plugin {
             2500
           );
           }
-          uploaded=await this.uploadFileToDirectR2(target);
+          uploaded=await this.uploadFileToAList(target,token);
           seenTargets.set(target.path, uploaded);
         }
 
@@ -1860,27 +1947,6 @@ class PrivateSharePlugin extends Plugin {
       }
 
       if (!replacements.length) {
-        if (automatic) {
-          const attempt = Number(
-            runOptions.retryAttempt || 0
-          );
-          if (attempt < 3) {
-            await new Promise((resolve) =>
-              window.setTimeout(
-                resolve,
-                1000 + attempt * 750
-              )
-            );
-            return this.performAListUpload(
-              file,
-              {
-                automatic: true,
-                silentNoop: true,
-                retryAttempt: attempt + 1,
-              }
-            );
-          }
-        }
         if (!silentNoop) {
           new Notice(
             "\u5f53\u524d\u7b14\u8bb0\u6ca1\u6709\u627e\u5230\u53ef\u4e0a\u4f20\u7684\u672c\u5730\u9644\u4ef6"
@@ -1898,7 +1964,9 @@ class PrivateSharePlugin extends Plugin {
         file.path,
         new Map([...seenTargets].filter(([, asset]) => markdown.includes(asset.publicUrl)))
       );
+      if(automatic){this.settings.pendingUploadedShareRefresh ||= {};this.settings.pendingUploadedShareRefresh[file.path]=true;}
       await this.saveData(this.settings);
+      if(automatic)await this.retryUploadedShareRefresh();
       new Notice(
         (automatic
           ? "\u5df2\u81ea\u52a8\u4e0a\u4f20 "
@@ -1950,6 +2018,7 @@ class PrivateSharePlugin extends Plugin {
       )
         continue;
       if (uploaded.uploadKey) delete this.settings.pendingAListUploads?.[uploaded.uploadKey];
+      if (uploaded.legacyUploadKey) delete this.settings.pendingAListUploads?.[uploaded.legacyUploadKey];
       byRemotePath.set(uploaded.remotePath, {
         backend: uploaded.backend || "alist",
         uploadIdentity: uploaded.uploadIdentity || "",
@@ -2027,6 +2096,7 @@ class PrivateSharePlugin extends Plugin {
   }
 
   async retryAListCleanup() {
+    if(this.isMobileDevice())return false;
     if (this.configTransferRunning) return false;
     if (this.alistCleanupRunning) return;
     this.alistCleanupRunning = true;
@@ -2172,14 +2242,13 @@ class PrivateSharePlugin extends Plugin {
     ).open();
   }
 
-  async preparePayload(file, options, existing) {
-    if(this.settings.alistAutoUpload!==false)await this.uploadCurrentNoteAttachmentsToAList(file,{silentNoop:true});
+  async preparePayload(file, options, existing, runOptions={}) {
+    if(!runOptions.skipUpload&&this.settings.alistAutoUpload!==false)await this.uploadCurrentNoteAttachmentsToAList(file,{silentNoop:true});
     let markdown=await this.app.vault.read(file);
     const attachments=[],uploads=[];
     const labelText=value=>String(value).replace(/[\[\]<>]/g,'');
     const placeholder=(target,label)=>{
-      if(!this.localOnlyAttachment(target)&&this.settings.alistAutoUpload!==false)throw new Error('新附件还未获得稳定短链，请重试上传后再分享');
-      return '**'+labelText(label||target.name)+'（附件仅保存在本地）**';
+      return '**'+labelText(label||target.name)+'（附件仅保存在本地，等待电脑上传）**';
     };
     markdown=markdown.replace(/!\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g,(match,raw,alias)=>{
       const target=this.app.metadataCache.getFirstLinkpathDest(raw.trim(),file.path);
@@ -2778,15 +2847,17 @@ class PrivateShareSettingTab extends PluginSettingTab {
       });
 
     c.createEl("h3", {
-      text: 'R2 公网附件',
+      text: '电脑内网附件上传',
     });
 
-    new Setting(c).setName('附件上传方式').setDesc('仅 Worker 公网直传 R2。切换前已有的附件留在本地，不自动补传；新附件获得稳定短链接后才改写笔记。');
-    c.createEl('h4',{text:'旧 AList 附件清理（不上传）'});
+    new Setting(c).setName('附件上传方式').setDesc(this.plugin.isMobileDevice()?'手机仅同步本地附件，不上传；同步到电脑后由电脑通过内网 AList 上传。':'电脑通过内网 AList 上传到 R2；启动、同步完成及每 5 分钟检查待上传附件。不在家时等待，不走公网上传。');
+    new Setting(c).setName('局域网分享服务（可选）').setDesc('电脑在家生成附件短链时优先使用；不是附件上传地址。留空使用公网分享服务。').addText(text=>text.setPlaceholder('http://192.168.x.x:8090').setValue(this.plugin.settings.localUploadUrl||'').onChange(async value=>{this.plugin.settings.localUploadUrl=value.trim();await this.plugin.saveData(this.plugin.settings);}));
+    new Setting(c).setName('检查待上传附件').setDesc('只上传笔记引用的本地附件；成功后改写为稳定短链。').addButton(b=>b.setButtonText('立即检查').onClick(()=>this.plugin.scanDesktopAttachments({manual:true})));
+
     new Setting(c)
-      .setName('旧 AList 附件清理地址')
+      .setName('AList 局域网地址')
       .setDesc(
-        "仅用于清理以前上传的 AList 附件，不用于上传"
+        "电脑上传和清理使用此内网地址；手机不会使用。请填写家里的内网 IP 地址。"
       )
       .addText((text) =>
         text
@@ -2806,7 +2877,7 @@ class PrivateShareSettingTab extends PluginSettingTab {
     new Setting(c)
       .setName("AList \u516c\u7f51\u8bbf\u95ee\u5730\u5740")
       .setDesc(
-        '仅用于旧附件查找和清理；新附件短链由 Worker 生成'
+        '附件管理地址；对外预览继续使用媒体服务的稳定短链'
       )
       .addText((text) =>
         text
@@ -2886,7 +2957,7 @@ class PrivateShareSettingTab extends PluginSettingTab {
     new Setting(c)
       .setName('附件自动上传')
       .setDesc(
-        "\u5f00\u542f\u540e\uff0c\u62d6\u5165\u6216\u7c98\u8d34\u672c\u5730\u9644\u4ef6\u5230\u7b14\u8bb0\u65f6\uff0c仅新附件通过 Worker 公网直传 R2 \u5e76\u66ff\u6362\u4e3a\u516c\u7f51\u94fe\u63a5"
+        "\u5f00\u542f\u540e\uff0c\u62d6\u5165\u6216\u7c98\u8d34\u672c\u5730\u9644\u4ef6\u5230\u7b14\u8bb0\u65f6\uff0c仅电脑通过内网 AList 上传已同步的本地附件到 R2 \u5e76\u66ff\u6362\u4e3a\u516c\u7f51\u94fe\u63a5"
       )
       .addToggle((toggle) =>
         toggle
@@ -2895,6 +2966,7 @@ class PrivateShareSettingTab extends PluginSettingTab {
           )
           .onChange(async (value) => {
             this.plugin.settings.alistAutoUpload = value;
+            if(value)this.plugin.scheduleDesktopUploadScan();
             await this.plugin.saveData(
               this.plugin.settings
             );
