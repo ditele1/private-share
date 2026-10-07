@@ -1792,6 +1792,7 @@ class PrivateSharePlugin extends Plugin {
 
   async performDesktopAListUpload(target,token,identity) {
     const {size,mtime}=target.stat;
+    if(identity!==target.path+':'+mtime+':'+size)throw Error('附件在等待上传时发生变化，请稍后重试');
     const base=this.desktopAListBase();if(!base||this.desktopUploadsStopped)throw Error('电脑附件上传已暂停');
     this.settings.pendingAListUploads ||= {};
     const uploadKey='alist:'+identity;
@@ -1802,11 +1803,10 @@ class PrivateSharePlugin extends Plugin {
     if(!pending&&previous)pending={backend:'alist',remotePath:previous.remotePath,uploaded:true};
     // Reuse a confirmed AList upload if only link registration failed.
     if(!pending){pending={backend:'alist',remotePath:this.buildAListRemotePath(target.name),uploaded:false};this.settings.pendingAListUploads[uploadKey]=pending;await this.saveData(this.settings);}
-    if(pending.uploaded){
-      const check=await requestUrl({url:base+'/api/fs/get',method:'POST',headers:{Authorization:token,'Content-Type':'application/json'},body:JSON.stringify({path:pending.remotePath,password:''}),throw:false});
-      if(check.status!==200||check.json?.code!==200)throw Error('无法核实已有 AList 附件，已保留本地链接');
-      if(check.json.data?.size!==size)throw Error('已有 AList 附件大小不一致，已保留本地链接');
-    }else{
+    // A successful synchronous PUT is persisted before link registration.
+    // Registration itself HEAD-checks R2, so AList listing/cache failures do
+    // not trigger another upload of a confirmed object.
+    if(!pending.uploaded){
       const binary=await this.app.vault.readBinary(target);
       if(binary.byteLength!==size)throw Error('附件正在同步，请稍后重试');
       await this.ensureAListDirectory(pending.remotePath.slice(0,pending.remotePath.lastIndexOf('/')),token);

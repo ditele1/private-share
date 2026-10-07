@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.2
+
+- Reuse confirmed synchronous AList uploads even when AList file-list metadata is unavailable; short-link registration verifies object existence directly in R2.
+- Keep desktop LAN upload and mobile deferral from 0.6.1, including post-sync discovery and safe updates of existing shares.
+
+
 ## 0.6.1
 
 - Upload attachments only on desktop through an explicitly configured LAN AList endpoint; mobile never uploads attachment bytes.
