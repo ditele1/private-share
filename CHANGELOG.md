@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.3
+
+- Keep image files and image links local in the Vault; exclude images from automatic/manual AList/R2 upload and desktop pending-file discovery.
+- Copy referenced local images into share-owned server disk attachments only when publishing or updating a share, on desktop and mobile. External pages still display images without changing Vault content.
+- Deduplicate repeated image references, support wiki/Markdown/HTML image syntax, and retain existing remote image links and ownership records.
+- Preserve desktop LAN upload for video, audio and documents, and mobile deferral for those attachments.
+- Bound share image payloads and reject files that change during reading.
+
+
 ## 0.6.2
 
 - Reuse confirmed synchronous AList uploads even when AList file-list metadata is unavailable; short-link registration verifies object existence directly in R2.

@@ -94,6 +94,7 @@ function mimeFromName(name) {
     gif: "image/gif",
     webp: "image/webp",
     svg: "image/svg+xml",
+    bmp: "image/bmp", avif: "image/avif", apng: "image/apng", ico: "image/x-icon", tif: "image/tiff", tiff: "image/tiff", heic: "image/heic", heif: "image/heif",
     pdf: "application/pdf",
     xlsx:
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -107,7 +108,7 @@ function mimeFromName(name) {
   return map[ext] || "application/octet-stream";
 }
 function isImageName(name) {
-  return /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(name);
+  return /\.(png|jpe?g|gif|webp|svg|bmp|avif|apng|ico|tiff?|heic|heif)$/i.test(name);
 }
 function isAudioName(name) {
   return /\.(mp3|m4a|aac|wav|ogg|oga|flac)$/i.test(name);
@@ -1369,7 +1370,7 @@ class PrivateSharePlugin extends Plugin {
   hasLocalAttachmentLinks(text,file) {
     const refs=[...text.matchAll(/!\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g)].map(m=>m[1]);
     for(const m of text.matchAll(/!?\[[^\]]*\]\(([^)]+)\)/g))if(!/^(?:https?:|data:|app:|obsidian:|mailto:)/i.test(m[1].trim()))refs.push(m[1].trim().replace(/^<|>$/g,''));
-    return refs.some(raw=>{let link=raw.split('#')[0].trim();try{link=decodeURIComponent(link);}catch{}const target=this.app.metadataCache.getFirstLinkpathDest(link,file.path);return target instanceof TFile&&target.extension!=='md';});
+    return refs.some(raw=>{let link=raw.split('#')[0].trim();try{link=decodeURIComponent(link);}catch{}const target=this.app.metadataCache.getFirstLinkpathDest(link,file.path);return target instanceof TFile&&target.extension!=='md'&&!isImageName(target.name);});
   }
 
   async scanDesktopAttachments(options={}) {
@@ -1781,6 +1782,7 @@ class PrivateSharePlugin extends Plugin {
 
 
   async uploadFileToAList(target,token) {
+    if(isImageName(target.name))throw Error('图片保留在 Vault，分享时复制到分享服务器，不上传 AList/R2');
     if(this.isMobileDevice()||!this.desktopAListBase())throw Error('附件只由电脑通过家里的 AList 上传');
     const identity=target.path+':'+target.stat.mtime+':'+target.stat.size;
     this.desktopFileJobs ||= new Map();
@@ -1791,6 +1793,7 @@ class PrivateSharePlugin extends Plugin {
   }
 
   async performDesktopAListUpload(target,token,identity) {
+    if(isImageName(target.name))throw Error('图片不上传 AList/R2');
     const {size,mtime}=target.stat;
     if(identity!==target.path+':'+mtime+':'+size)throw Error('附件在等待上传时发生变化，请稍后重试');
     const base=this.desktopAListBase();if(!base||this.desktopUploadsStopped)throw Error('电脑附件上传已暂停');
@@ -1835,6 +1838,7 @@ class PrivateSharePlugin extends Plugin {
     const silentNoop = !!runOptions.silentNoop;
     try {
       if(this.isMobileDevice())return false;
+      if(this.app.metadataCache&&!this.hasLocalAttachmentLinks(await this.app.vault.read(file),file))return false;
       if(!await this.desktopAListAvailable()){if(!automatic&&!silentNoop)new Notice('家里的 AList 暂不可用，附件继续保留本地');return false;}
       const settings=!!(this.settings.serverUrl&&this.settings.apiToken);
       if (!settings) return false;
@@ -1858,7 +1862,7 @@ class PrivateSharePlugin extends Plugin {
           );
         if (
           !(target instanceof TFile) ||
-          target.extension === "md"
+          target.extension === "md" || isImageName(target.name)
         )
           continue;
 
@@ -1915,7 +1919,7 @@ class PrivateSharePlugin extends Plugin {
           );
         if (
           !(target instanceof TFile) ||
-          target.extension === "md"
+          target.extension === "md" || isImageName(target.name)
         )
           continue;
 
@@ -2242,12 +2246,38 @@ class PrivateSharePlugin extends Plugin {
     ).open();
   }
 
+  async localImagesForShare(markdown,file) {
+    const images=new Map();let total=0;
+    const resolve=raw=>{
+      if(/^(?:https?:|data:|app:|obsidian:|mailto:)/i.test(raw.trim()))return null;
+      let link=raw.trim().replace(/^<|>$/g,'').split('#')[0];try{link=decodeURIComponent(link);}catch{}
+      const target=this.app.metadataCache.getFirstLinkpathDest(link,file.path);
+      return target instanceof TFile&&isImageName(target.name)?target:null;
+    };
+    const refs=[...markdown.matchAll(/!\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g)].map(m=>m[1]);
+    for(const m of markdown.matchAll(/!?\[[^\]]*\]\(([^)]+)\)/g))refs.push(m[1]);
+    for(const m of markdown.matchAll(/<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi))refs.push(m[1]);
+    for(const raw of refs){
+      const target=resolve(raw);if(!target||images.has(target.path))continue;
+      if(images.size>=60||target.stat.size>16*1024**2||total+target.stat.size>48*1024**2)throw Error('分享图片最多 60 张、单张 16 MiB、合计 48 MiB；Vault 图片保留');
+      const size=target.stat.size,mtime=target.stat.mtime,binary=await this.app.vault.readBinary(target);
+      const current=await this.app.vault.adapter.stat(target.path);
+      if(binary.byteLength!==size||!current||current.size!==size||current.mtime!==mtime)throw Error('分享图片正在同步或变化，请稍后重试');
+      const ext=target.name.split('.').pop().toLowerCase(),key='asset-'+(images.size+1)+'.'+ext;
+      images.set(target.path,{key,name:target.name,mime:mimeFromName(target.name),dataBase64:arrayBufferToBase64(binary)});total+=size;
+    }
+    return {images,resolve};
+  }
+
   async preparePayload(file, options, existing, runOptions={}) {
     if(!runOptions.skipUpload&&this.settings.alistAutoUpload!==false)await this.uploadCurrentNoteAttachmentsToAList(file,{silentNoop:true});
     let markdown=await this.app.vault.read(file);
-    const attachments=[],uploads=[];
+    const local=await this.localImagesForShare(markdown,file);
+    const attachments=[...local.images.values()],uploads=[];
     const labelText=value=>String(value).replace(/[\[\]<>]/g,'');
     const placeholder=(target,label)=>{
+      const image=local.images.get(target.path);
+      if(image)return aListReplacement(target.name,label||target.name,'{{ASSET_BASE}}/'+image.key,true);
       return '**'+labelText(label||target.name)+'（附件仅保存在本地，等待电脑上传）**';
     };
     markdown=markdown.replace(/!\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g,(match,raw,alias)=>{
@@ -2259,6 +2289,10 @@ class PrivateSharePlugin extends Plugin {
       let local=raw.trim().replace(/^<|>$/g,'').split('#')[0];try{local=decodeURIComponent(local)}catch{}
       const target=this.app.metadataCache.getFirstLinkpathDest(local,file.path);
       return target instanceof TFile&&target.extension!=='md'?placeholder(target,label):match;
+    });
+    markdown=markdown.replace(/<img\b[^>]*\bsrc\s*=\s*(["'])([^"']+)\1[^>]*>/gi,(match,quote,raw)=>{
+      const target=local.resolve(raw),image=target&&local.images.get(target.path);
+      return image?match.replace(quote+raw+quote,quote+'{{ASSET_BASE}}/'+image.key+quote):match;
     });
     markdown=markdown.replace(/\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g,(_m,target,alias)=>alias||target);
 
@@ -2847,12 +2881,13 @@ class PrivateShareSettingTab extends PluginSettingTab {
       });
 
     c.createEl("h3", {
-      text: '电脑内网附件上传',
+      text: '图片本地保存与附件上传',
     });
 
-    new Setting(c).setName('附件上传方式').setDesc(this.plugin.isMobileDevice()?'手机仅同步本地附件，不上传；同步到电脑后由电脑通过内网 AList 上传。':'电脑通过内网 AList 上传到 R2；启动、同步完成及每 5 分钟检查待上传附件。不在家时等待，不走公网上传。');
+    new Setting(c).setName('图片保存方式').setDesc('图片始终保留在 Vault，本地直接显示；发布或更新分享时复制到分享服务器磁盘，供网页显示。不经过 AList/R2，不改写 Vault 图片链接。');
+    new Setting(c).setName('附件上传方式').setDesc(this.plugin.isMobileDevice()?'手机仅同步本地附件，不上传；同步到电脑后由电脑通过内网 AList 上传。':'视频、音频和文档由电脑通过内网 AList 上传到 R2；启动、同步完成及每 5 分钟检查待上传附件。不在家时等待，不走公网上传。');
     new Setting(c).setName('局域网分享服务（可选）').setDesc('电脑在家生成附件短链时优先使用；不是附件上传地址。留空使用公网分享服务。').addText(text=>text.setPlaceholder('http://192.168.x.x:8090').setValue(this.plugin.settings.localUploadUrl||'').onChange(async value=>{this.plugin.settings.localUploadUrl=value.trim();await this.plugin.saveData(this.plugin.settings);}));
-    new Setting(c).setName('检查待上传附件').setDesc('只上传笔记引用的本地附件；成功后改写为稳定短链。').addButton(b=>b.setButtonText('立即检查').onClick(()=>this.plugin.scanDesktopAttachments({manual:true})));
+    new Setting(c).setName('检查待上传附件').setDesc('只上传笔记引用的视频、音频和文档；图片保持本地链接。').addButton(b=>b.setButtonText('立即检查').onClick(()=>this.plugin.scanDesktopAttachments({manual:true})));
 
     new Setting(c)
       .setName('AList 局域网地址')

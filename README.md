@@ -1,6 +1,6 @@
 # Private Share for Obsidian
 
-> Version 0.6.2: Only desktop uploads attachments, through a configured LAN AList endpoint backed by R2. Mobile keeps files local for Vault synchronization. Desktop checks referenced local files at startup, after synchronization and every five minutes, waiting while the home endpoint is unavailable. Successful automatic uploads update stable short links and existing shares. Earlier cutover exclusions no longer apply. Existing public links remain compatible.
+> Version 0.6.3: Images and image links stay local in the Vault. Publishing or updating a share copies referenced images to share-owned server disk assets, on desktop or mobile, without AList/R2 uploads or Vault rewrites. Video, audio and documents retain desktop LAN AList upload and mobile deferral. Existing remote image links remain compatible.
 
 
 [中文说明](README.zh-CN.md)
