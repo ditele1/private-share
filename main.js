@@ -14,7 +14,7 @@ const DEFAULT_SETTINGS = {
   serverUrl: "",
   localUploadUrl: "",
   apiToken: "",
-  attachmentUploadBackend: "alist",
+  attachmentUploadBackend: "vps",
   alistLanUrl: "",
   alistPublicUrl: "",
   alistUsername: "",
@@ -753,7 +753,7 @@ function validatePortableConfig(config) {
     if(/Url$/.test(key)&&value){let u;try{u=new URL(value)}catch{throw Error("配置地址不正确")}
       if(!["http:","https:"].includes(u.protocol)||u.username||u.password||u.hash)throw Error("配置地址不正确");}
   }
-  if(config.attachmentUploadBackend&&!['alist','worker'].includes(config.attachmentUploadBackend))throw Error('Invalid attachment upload backend');return {...config};
+  if(config.attachmentUploadBackend&&!['alist','worker','vps'].includes(config.attachmentUploadBackend))throw Error('Invalid attachment upload backend');return {...config};
 }
 function profileBytes(value, length) {
   if(typeof value!=="string"||value.length>350000||!/^[A-Za-z0-9+/]*={0,2}$/.test(value))throw Error("配置文件格式不正确");
@@ -916,7 +916,7 @@ class PrivateSharePlugin extends Plugin {
     );
     if (!this.settings.shares) this.settings.shares = {};
     this.app.workspace.onLayoutReady(async()=>{
-      this.settings.attachmentUploadBackend='alist';
+      this.settings.attachmentUploadBackend='vps';
       await this.saveData(this.settings);
       this.scheduleDesktopUploadScan();
     });
@@ -1346,6 +1346,8 @@ class PrivateSharePlugin extends Plugin {
     }catch{return '';}
   }
 
+  async desktopUploadAvailable() {return !this.isMobileDevice()&&!!(this.settings.serverUrl&&this.settings.apiToken);}
+
   async desktopAListAvailable() {
     const base=this.desktopAListBase();if(!base)return false;
     if(this.desktopProbe?.base===base&&Date.now()<this.desktopProbe.until)return this.desktopProbe.ok;
@@ -1378,15 +1380,18 @@ class PrivateSharePlugin extends Plugin {
     if(this.desktopScanRunning||this.configTransferRunning||this.desktopUploadsStopped||this.settings.alistAutoUpload===false&&!options.manual)return false;
     this.desktopScanRunning=true;
     try{
-      if(!await this.desktopAListAvailable()){if(options.manual)new Notice('家里的 AList 暂不可用，附件继续保留本地，稍后自动重试');return false;}
+      if(!await this.desktopUploadAvailable()){if(options.manual)new Notice('分享服务暂不可用，附件继续保留本地，稍后自动重试');return false;}
       let uploaded=0;
-      for(const file of this.app.vault.getMarkdownFiles()){
-        if(this.desktopUploadsStopped)break;
-        if(this.hasLocalAttachmentLinks(await this.app.vault.read(file),file)){
-          const changed=await this.uploadCurrentNoteAttachmentsToAList(file,{automatic:true,silentNoop:true});
-          if(changed)uploaded++;
+      const queue=this.app.vault.getMarkdownFiles().slice();
+      await Promise.all(Array.from({length:2},async()=>{
+        while(queue.length&&!this.desktopUploadsStopped){
+          const file=queue.shift();
+          if(this.hasLocalAttachmentLinks(await this.app.vault.read(file),file)){
+            const changed=await this.uploadCurrentNoteAttachmentsToAList(file,{automatic:true,silentNoop:true});
+            if(changed)uploaded++;
+          }
         }
-      }
+      }));
       await this.retryUploadedShareRefresh();
       if(options.manual)new Notice('检查完成，已处理 '+uploaded+' 篇笔记');return uploaded>0;
     }catch{if(options.manual)new Notice('附件检查未完成，本地文件保留，稍后重试');return false;}
@@ -1781,47 +1786,106 @@ class PrivateSharePlugin extends Plugin {
   }
 
 
-  async uploadFileToAList(target,token) {
-    if(isImageName(target.name))throw Error('图片保留在 Vault，分享时复制到分享服务器，不上传 AList/R2');
-    if(this.isMobileDevice()||!this.desktopAListBase())throw Error('附件只由电脑通过家里的 AList 上传');
-    const identity=target.path+':'+target.stat.mtime+':'+target.stat.size;
-    this.desktopFileJobs ||= new Map();
-    if(this.desktopFileJobs.has(identity))return this.desktopFileJobs.get(identity);
-    const job=(this.desktopFileTail||Promise.resolve()).catch(()=>{}).then(()=>this.performDesktopAListUpload(target,token,identity));
-    this.desktopFileTail=job.then(()=>{},()=>{});this.desktopFileJobs.set(identity,job);
-    try{return await job;}finally{this.desktopFileJobs.delete(identity);}
+  async directRequest(base, route, ticket, method = 'POST', body, partNumber) {
+    for(let attempt=0;attempt<4;attempt++){
+      try{
+        const binary=body instanceof ArrayBuffer;
+        const headers={'X-Upload-Ticket':ticket};
+        if(body!==undefined)headers['Content-Type']=binary?'application/octet-stream':'application/json';
+        if(partNumber)headers['X-Part-Number']=String(partNumber);
+        const data=body===undefined?undefined:binary?Buffer.from(body):Buffer.from(JSON.stringify(body));
+        const r=await new Promise((resolve,reject)=>{
+          const u=new URL(base+route);if(u.protocol!=='https:')return reject(new Error('直传必须使用 HTTPS'));
+          if(data)headers['Content-Length']=String(data.length);
+          const req=require('https').request(u,{method,headers},response=>{
+            const chunks=[];let length=0;response.on('data',chunk=>{length+=chunk.length;if(length>1048576)req.destroy(new Error('上传响应过大'));else chunks.push(chunk);});
+            response.on('error',reject);response.on('end',()=>{try{resolve({status:response.statusCode,json:JSON.parse(Buffer.concat(chunks).toString())});}catch{reject(new Error('上传响应无效'));}});
+          });req.setTimeout(180000,()=>req.destroy(new Error('上传分片超时，已完成分片保留')));req.on('error',reject);req.end(data);
+        });
+        if(r.status>=200&&r.status<300)return r.json;
+        if(r.status<500&&![408,429].includes(r.status))throw Object.assign(new Error('VPS 上传请求失败：HTTP '+r.status),{permanent:true});
+        throw new Error('VPS 上传暂时失败：HTTP '+r.status);
+      }catch(e){if(e.permanent||attempt===3)throw e;await new Promise(resolve=>window.setTimeout(resolve,1000*2**attempt));}
+    }
   }
 
-  async performDesktopAListUpload(target,token,identity) {
-    if(isImageName(target.name))throw Error('图片不上传 AList/R2');
-    const {size,mtime}=target.stat;
-    if(identity!==target.path+':'+mtime+':'+size)throw Error('附件在等待上传时发生变化，请稍后重试');
-    const base=this.desktopAListBase();if(!base||this.desktopUploadsStopped)throw Error('电脑附件上传已暂停');
-    this.settings.pendingAListUploads ||= {};
-    const uploadKey='alist:'+identity;
-    let pending=this.settings.pendingAListUploads[uploadKey];
-    const legacy=this.settings.pendingAListUploads[identity];
-    if(!pending&&legacy?.remotePath&&!legacy.backend){pending={backend:'alist',remotePath:legacy.remotePath,uploaded:true,legacyUploadKey:identity};this.settings.pendingAListUploads[uploadKey]=pending;await this.saveData(this.settings);}
-    const previous=Object.values(this.settings.alistAssets||{}).flat().find(a=>a.backend!=='worker'&&a.uploadIdentity===identity&&!a.pendingDelete);
-    if(!pending&&previous)pending={backend:'alist',remotePath:previous.remotePath,uploaded:true};
-    // Reuse a confirmed AList upload if only link registration failed.
-    if(!pending){pending={backend:'alist',remotePath:this.buildAListRemotePath(target.name),uploaded:false};this.settings.pendingAListUploads[uploadKey]=pending;await this.saveData(this.settings);}
-    // A successful synchronous PUT is persisted before link registration.
-    // Registration checks the configured media store, so listing/cache failures do
-    // not trigger another upload of a confirmed object.
-    if(!pending.uploaded){
-      const binary=await this.app.vault.readBinary(target);
-      if(binary.byteLength!==size)throw Error('附件正在同步，请稍后重试');
-      await this.ensureAListDirectory(pending.remotePath.slice(0,pending.remotePath.lastIndexOf('/')),token);
-      const r=await requestUrl({url:base+'/api/fs/put',method:'PUT',headers:{Authorization:token,'File-Path':encodeURIComponent(pending.remotePath),'As-Task':'false','Content-Type':mimeFromName(target.name)},body:binary,throw:false});
-      if(r.status<200||r.status>=300||r.json?.code!==200)throw Error('AList 上传失败，本地附件保留');
-      pending.uploaded=true;await this.saveData(this.settings);
+  async uploadFileToVPS(target) {
+    if(this.isMobileDevice()||isImageName(target.name))throw new Error('手机及图片不直传');
+    this.directFileJobs ||= new Map();
+    const identity=target.path+':'+target.stat.mtime+':'+target.stat.size;
+    if(this.directFileJobs.has(identity))return this.directFileJobs.get(identity);
+    // The desktop scan bounds concurrent notes; identical files share one job.
+    const job=this.performVPSUpload(target,identity);
+
+    this.directFileJobs.set(identity,job);
+    try{return await job;}finally{this.directFileJobs.delete(identity);}
+  }
+
+  async performVPSUpload(target,identity) {
+    const size=target.stat.size,mtime=target.stat.mtime;
+    if(!Number.isSafeInteger(size)||size<1||size>2*1024**3)throw new Error('直传附件必须介于 1 字节和 2 GiB 之间');
+    if(this.isMobileDevice()||isImageName(target.name))throw new Error('仅电脑直传非图片附件');
+    const adapter=this.app.vault.adapter;
+    const fullPath=typeof adapter.getFullPath==='function'?adapter.getFullPath(target.path):null;
+    if(!fullPath&&size>128*1024**2)throw new Error('手机暂支持最多 128 MiB；更大的附件请从电脑分片上传');
+    const previous=Object.values(this.settings.alistAssets||{}).flat().find(a=>a.uploadIdentity===identity&&!a.pendingDelete);
+    if(previous){
+      const r=await requestUrl({url:previous.publicUrl,method:'HEAD',throw:false});
+      if(r.status===200&&Number(r.headers['content-length'])===size)return {...previous,uploadIdentity:identity};
+      if(r.status!==404)throw new Error('无法核实已有附件，已保留本地链接');
     }
-    const current=await this.app.vault.adapter.stat(target.path);
-    if(!current||current.size!==size||current.mtime!==mtime)throw Error('附件同步过程中发生变化，本地链接保留，请重试');
-    if(this.desktopUploadsStopped)throw Error('插件已停止，已上传记录保留');
-    const publicUrl=await this.getMediaProxyUrl('',pending.remotePath);
-    return {backend:'alist',remotePath:pending.remotePath,publicUrl,uploadKey,legacyUploadKey:pending.legacyUploadKey,uploadIdentity:identity};
+    this.settings.pendingAListUploads ||= {};
+    const uploadKey='vps:'+identity;
+    let pending=this.settings.pendingAListUploads[uploadKey];
+    if(!pending){const bytes=require('crypto').randomBytes(16);pending={backend:'vps',requestId:[...bytes].map(n=>n.toString(16).padStart(2,'0')).join(''),parts:[]};this.settings.pendingAListUploads[uploadKey]=pending;await this.saveData(this.settings);}
+    if(!pending.ticket||pending.expiresAt<Date.now()+60000){
+      const fresh=await this.api('/api/media/upload-ticket','POST',{requestId:pending.requestId,name:target.name,size});
+      const u=new URL(fresh.base);
+      if(u.protocol!=='https:'||u.username||u.password||u.pathname!=='/'||u.search||u.hash||!/^private-share-direct\//.test(fresh.key)||fresh.chunk!==8*1024**2)throw new Error('服务端返回了无效的 VPS 上传配置');
+      Object.assign(pending,fresh,{session:null,parts:[]});await this.saveData(this.settings);
+    }
+    let done=await this.directRequest(pending.base,'/upload/status',pending.ticket);
+    if(!done.done){
+      pending.parts=Array.isArray(done.parts)?done.parts:[];
+      if(!pending.session){const started=await this.directRequest(pending.base,'/upload/start',pending.ticket,'POST',{name:target.name});if(started.done)done=started;else{pending.session=started.session;await this.saveData(this.settings);}}
+      if(!done.done){
+        new Notice('正在直传 VPS：'+target.name,5000);
+        const total=Math.ceil(size/pending.chunk);let handle,mobile;
+        try{
+          if(fullPath)handle=await require('fs').promises.open(fullPath,'r');
+          else mobile=await this.app.vault.readBinary(target);
+          for(let number=1;number<=total;number++){
+            if(pending.parts.some(p=>p.partNumber===number))continue;
+            if(this.desktopUploadsStopped)throw new Error('上传暂停，分片已保存');
+            const before=await adapter.stat(target.path);
+            if(!before||before.size!==size||before.mtime!==mtime)throw new Error('本地附件已删除或改变，停止上传');
+            const start=(number-1)*pending.chunk,length=Math.min(pending.chunk,size-start);
+            let body;
+            if(handle){const buffer=new Uint8Array(length);let offset=0;while(offset<length){const r=await handle.read(buffer,offset,length-offset,start+offset);if(!r.bytesRead)throw new Error('附件读取不完整，请重试');offset+=r.bytesRead;}body=buffer.buffer;}
+            else body=mobile.slice(start,start+length);
+            const part=await this.directRequest(pending.base,'/upload/part',pending.session,'PUT',body,number);
+            if(part.part?.partNumber!==number||typeof part.part.etag!=='string')throw new Error('无效的分片确认');
+            pending.parts.push(part.part);pending.parts.sort((a,b)=>a.partNumber-b.partNumber);await this.saveData(this.settings);
+            if(total>1)new Notice('VPS 上传 '+target.name+'：'+Math.round(number/total*100)+'%',1500);
+          }
+        }finally{await handle?.close();}
+        const current=await adapter.stat(target.path);
+        if(!current||current.size!==size||current.mtime!==mtime){await this.directRequest(pending.base,'/upload/abort',pending.session).catch(()=>{});delete this.settings.pendingAListUploads[uploadKey];await this.saveData(this.settings);throw new Error('上传期间附件发生变化，已保留本地链接，请重试');}
+        done=await this.directRequest(pending.base,'/upload/complete',pending.session,'POST',{parts:pending.parts});
+      }
+    }
+    if(!done.done||done.key!==pending.key||done.size!==size||!/^[A-Za-z0-9_-]{16}$/.test(done.code||''))throw new Error('VPS 上传确认不完整，本地链接保留');
+    const publicUrl=pending.base+'/m/'+done.code;
+    // Preserve ownership until the public file can be read.
+    let visible=false;
+    for(let attempt=0;attempt<21;attempt++){
+      try{const r=await requestUrl({url:publicUrl,method:'GET',headers:{Range:'bytes=0-0'},throw:false});if(r.status===206&&r.headers['content-range']?.endsWith('/'+size)){visible=true;break;}}catch{}
+      if(attempt<20)await new Promise(resolve=>window.setTimeout(resolve,3000));
+    }
+    if(!visible)throw new Error('VPS 已上传，短链接暂未生效；稍后重试会复用文件');
+    const current=await adapter.stat(target.path);
+    if(!current||current.size!==size||current.mtime!==mtime)throw new Error('附件已变化，旧上传记录保留，请重试');
+    return {backend:'vps',remotePath:pending.remotePath,publicUrl,uploadKey,uploadIdentity:identity};
   }
 
   async collectVaultMediaUrls() {
@@ -1839,12 +1903,11 @@ class PrivateSharePlugin extends Plugin {
     try {
       if(this.isMobileDevice())return false;
       if(this.app.metadataCache&&!this.hasLocalAttachmentLinks(await this.app.vault.read(file),file))return false;
-      if(!await this.desktopAListAvailable()){if(!automatic&&!silentNoop)new Notice('家里的 AList 暂不可用，附件继续保留本地');return false;}
+      if(!await this.desktopUploadAvailable()){if(!automatic&&!silentNoop)new Notice('分享服务暂不可用，附件继续保留本地');return false;}
       const settings=!!(this.settings.serverUrl&&this.settings.apiToken);
       if (!settings) return false;
 
-      if(!this.validateAListSettings(!automatic))return false;
-      const token=await this.getAListToken();
+      const token='';
       let markdown = await this.app.vault.read(file);
 
       const replacements = [];
@@ -1875,7 +1938,7 @@ class PrivateSharePlugin extends Plugin {
             2500
           );
           }
-          uploaded=await this.uploadFileToAList(target,token);
+          uploaded=await this.uploadFileToVPS(target);
           seenTargets.set(target.path, uploaded);
         }
 
@@ -1932,7 +1995,7 @@ class PrivateSharePlugin extends Plugin {
             2500
           );
           }
-          uploaded=await this.uploadFileToAList(target,token);
+          uploaded=await this.uploadFileToVPS(target);
           seenTargets.set(target.path, uploaded);
         }
 
@@ -2122,7 +2185,7 @@ class PrivateSharePlugin extends Plugin {
             // Unknown historical ownership records protect the object as well.
             const uncertain = entries.some(([owner, list]) => owner !== notePath && Array.isArray(list) && list.some(x => x.remotePath === asset.remotePath && !x.pendingDelete));
             if (uncertain) {asset.cleanupStatus = "tracked-elsewhere";continue;}
-            if(asset.backend==='worker')await this.api('/api/media/direct-delete','POST',{remotePath:asset.remotePath,urls:await this.collectVaultMediaUrls()});
+            if(asset.backend==='worker'||asset.backend==='vps')await this.api('/api/media/direct-delete','POST',{remotePath:asset.remotePath,urls:await this.collectVaultMediaUrls()});
             else {const token = await this.getAListToken();await this.deleteAListRemoteAsset(asset.remotePath, token);}
             const index = assets.indexOf(asset); if (index >= 0) assets.splice(index, 1);
           } catch (_) {
@@ -2868,14 +2931,15 @@ class PrivateShareSettingTab extends PluginSettingTab {
     });
 
     new Setting(c).setName('图片保存方式').setDesc('图片始终保留在 Vault，本地直接显示；发布或更新分享时复制到分享服务器磁盘，供网页显示。不经过 AList/R2，不改写 Vault 图片链接。');
-    new Setting(c).setName('附件上传方式').setDesc(this.plugin.isMobileDevice()?'手机仅同步本地附件，不上传；同步到电脑后由电脑通过内网 AList 上传。':'视频、音频和文档由电脑通过内网 AList 上传到 R2；启动、同步完成及每 5 分钟检查待上传附件。不在家时等待，不走公网上传。');
+    new Setting(c).setName('附件上传方式').setDesc(this.plugin.isMobileDevice()?'手机仅同步本地附件，不上传；同步到电脑后由电脑直传 VPS。':'视频、音频和文档由电脑直接上传到 VPS；启动、同步完成及每 5 分钟检查待上传附件。支持分片、进度显示与失败后重试，无需 AList。');
     new Setting(c).setName('局域网分享服务（可选）').setDesc('电脑在家生成附件短链时优先使用；不是附件上传地址。留空使用公网分享服务。').addText(text=>text.setPlaceholder('http://192.168.x.x:8090').setValue(this.plugin.settings.localUploadUrl||'').onChange(async value=>{this.plugin.settings.localUploadUrl=value.trim();await this.plugin.saveData(this.plugin.settings);}));
     new Setting(c).setName('检查待上传附件').setDesc('只上传笔记引用的视频、音频和文档；图片保持本地链接。').addButton(b=>b.setButtonText('立即检查').onClick(()=>this.plugin.scanDesktopAttachments({manual:true})));
 
+    c.createEl('h3',{text:'旧附件清理设置（可选，新上传不使用）'});
     new Setting(c)
       .setName('AList 局域网地址')
       .setDesc(
-        "电脑上传和清理使用此内网地址；手机不会使用。请填写家里的内网 IP 地址。"
+        "仅用于清理以前通过 AList 上传的附件。新附件直传 VPS，无需填写或连接 AList。"
       )
       .addText((text) =>
         text

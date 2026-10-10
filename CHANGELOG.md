@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.5
+
+- Upload desktop attachments directly to the configured HTTPS VPS using signed upload tickets; no AList is used for new uploads.
+- Read large files in 8 MiB chunks, show progress, and resume server-confirmed chunks after interruption.
+- Keep mobile uploads disabled, images local and historical attachment ownership intact.
+- Use reference-checked deletion for new direct uploads.
+
 ## 0.6.4
 
 - Refresh remote directory listings before deleting attachments to avoid stale-cache false success.
