@@ -1807,7 +1807,7 @@ class PrivateSharePlugin extends Plugin {
     // Reuse a confirmed AList upload if only link registration failed.
     if(!pending){pending={backend:'alist',remotePath:this.buildAListRemotePath(target.name),uploaded:false};this.settings.pendingAListUploads[uploadKey]=pending;await this.saveData(this.settings);}
     // A successful synchronous PUT is persisted before link registration.
-    // Registration itself HEAD-checks R2, so AList listing/cache failures do
+    // Registration checks the configured media store, so listing/cache failures do
     // not trigger another upload of a confirmed object.
     if(!pending.uploaded){
       const binary=await this.app.vault.readBinary(target);
@@ -2139,46 +2139,29 @@ class PrivateSharePlugin extends Plugin {
   async deleteAListRemoteAsset(remotePath, token) {
     const lan = normalizeBase(this.settings.alistLanUrl || this.settings.alistPublicUrl);
     const normalized = normalizeRemotePath(remotePath);
-    const slash = normalized.lastIndexOf("/");
-    const dir =
-      slash > 0 ? normalized.slice(0, slash) : "/";
+    const slash = normalized.lastIndexOf('/');
+    const dir = slash > 0 ? normalized.slice(0, slash) : '/';
     const name = normalized.slice(slash + 1);
-    if (!name) {
-      throw new Error("invalid remote asset path");
-    }
-
-    const response = await requestUrl({
-      url: lan + "/api/fs/remove",
-      method: "POST",
-      headers: {
-        Authorization: token,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        dir,
-        names: [name],
-      }),
-      throw: false,
-    });
-
-    let data = {};
-    try {
-      data =
-        response.json ||
-        JSON.parse(response.text || "{}");
-    } catch (_) {}
-
-    const ok =
-      response.status >= 200 &&
-      response.status < 300 &&
-      (!data.code || data.code === 200);
-    if (!ok) {
-      throw new Error(
-        (data && (data.message || data.error)) ||
-          "AList delete failed: HTTP " +
-            response.status
-      );
-    }
+    if (!name) throw new Error('invalid remote asset path');
+    const containsFile = async () => {
+      const r = await requestUrl({url:lan+'/api/fs/list',method:'POST',headers:{Authorization:token,'Content-Type':'application/json'},body:JSON.stringify({path:dir,password:'',page:1,per_page:1000,refresh:true}),throw:false});
+      let data;try{data=r.json||JSON.parse(r.text||'{}');}catch{throw new Error('Remote deletion could not be verified');}
+      if(r.status<200||r.status>=300||data.code!==200||!data.data)throw new Error('Remote deletion could not be verified');
+      const content=data.data.content;
+      if(!Array.isArray(content)&&data.data.total!==0)throw new Error('Remote deletion listing is incomplete');
+      // Always inspect every page; a missing item on the first page is not proof of deletion.
+      const items=Array.isArray(content)?content:[];
+      if(items.some(item=>item.name===name))return true;
+      const total=Number(data.data.total);
+      if(!Number.isFinite(total)||total<0||total>items.length)throw new Error('Remote deletion listing is incomplete');
+      return false;
+    };
+    // A stale directory cache can make the storage API report a false success.
+    if(!await containsFile())return;
+    const r=await requestUrl({url:lan+'/api/fs/remove',method:'POST',headers:{Authorization:token,'Content-Type':'application/json'},body:JSON.stringify({dir,names:[name]}),throw:false});
+    let data;try{data=r.json||JSON.parse(r.text||'{}');}catch{throw new Error('Remote deletion failed');}
+    if(r.status<200||r.status>=300||data.code!==200)throw new Error('Remote deletion failed');
+    if(await containsFile())throw new Error('Remote file still exists; keep deletion record for retry');
   }
 
   async confirmRemoteCleanup(notePath) {

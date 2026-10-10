@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.4
+
+- Refresh remote directory listings before deleting attachments to avoid stale-cache false success.
+- Verify that the file is absent after deletion; retain ownership and retry records on incomplete listings, failed checks or remaining files.
+- Keep desktop LAN uploads and stable links compatible with AList SFTP storage.
+
 ## 0.6.3
 
 - Keep image files and image links local in the Vault; exclude images from automatic/manual AList/R2 upload and desktop pending-file discovery.
