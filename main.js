@@ -2404,15 +2404,15 @@ class PrivateSharePlugin extends Plugin {
       headers["X-Edit-Token"] = editToken;
     }
 
-    const response = await requestUrl({
-      url: server + apiPath,
-      method,
-      headers,
-      body: body
-        ? JSON.stringify(body)
-        : undefined,
-      throw: false,
-    });
+    const request = base => requestUrl({url:base+apiPath,method,headers,body:body?JSON.stringify(body):undefined,throw:false});
+    const lan=apiPath.startsWith('/api/media/')?this.privateLanBase(this.settings.localUploadUrl):'';
+    let response;
+    if(lan){
+      let timer;
+      try{response=await Promise.race([request(lan),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Local media API unavailable')),4000);})]);}
+      catch{response=await request(server);}
+      finally{clearTimeout(timer);}
+    }else response=await request(server);
 
     let data = {};
     try {

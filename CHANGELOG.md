@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.6
+
+- Prefer the optional local share service for media tickets, reference checks and deletion on desktop; fall back to the public share service when the local endpoint is unavailable. Attachment bytes continue to upload directly to the HTTPS VPS.
+
 ## 0.6.5
 
 - Upload desktop attachments directly to the configured HTTPS VPS using signed upload tickets; no AList is used for new uploads.
