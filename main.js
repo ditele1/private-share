@@ -1370,9 +1370,7 @@ class PrivateSharePlugin extends Plugin {
   }
 
   hasLocalAttachmentLinks(text,file) {
-    const refs=[...text.matchAll(/!\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g)].map(m=>m[1]);
-    for(const m of text.matchAll(/!?\[[^\]]*\]\(([^)]+)\)/g))if(!/^(?:https?:|data:|app:|obsidian:|mailto:)/i.test(m[1].trim()))refs.push(m[1].trim().replace(/^<|>$/g,''));
-    return refs.some(raw=>{let link=raw.split('#')[0].trim();try{link=decodeURIComponent(link);}catch{}const target=this.app.metadataCache.getFirstLinkpathDest(link,file.path);return target instanceof TFile&&target.extension!=='md'&&!isImageName(target.name);});
+    return [...this.localAttachmentTargets(text,file).values()].some(target=>!this.localBackupFor(target,file.path));
   }
 
   async scanDesktopAttachments(options={}) {
@@ -1810,7 +1808,7 @@ class PrivateSharePlugin extends Plugin {
   }
 
   async uploadFileToVPS(target) {
-    if(this.isMobileDevice()||isImageName(target.name))throw new Error('手机及图片不直传');
+    if(this.isMobileDevice())throw new Error('手机不上传附件');
     this.directFileJobs ||= new Map();
     const identity=target.path+':'+target.stat.mtime+':'+target.stat.size;
     if(this.directFileJobs.has(identity))return this.directFileJobs.get(identity);
@@ -1824,7 +1822,7 @@ class PrivateSharePlugin extends Plugin {
   async performVPSUpload(target,identity) {
     const size=target.stat.size,mtime=target.stat.mtime;
     if(!Number.isSafeInteger(size)||size<1||size>2*1024**3)throw new Error('直传附件必须介于 1 字节和 2 GiB 之间');
-    if(this.isMobileDevice()||isImageName(target.name))throw new Error('仅电脑直传非图片附件');
+    if(this.isMobileDevice())throw new Error('仅电脑直传附件');
     const adapter=this.app.vault.adapter;
     const fullPath=typeof adapter.getFullPath==='function'?adapter.getFullPath(target.path):null;
     if(!fullPath&&size>128*1024**2)throw new Error('手机暂支持最多 128 MiB；更大的附件请从电脑分片上传');
@@ -1893,170 +1891,49 @@ class PrivateSharePlugin extends Plugin {
     for(const file of this.app.vault.getMarkdownFiles()){
       const text=await this.app.vault.read(file);
       for(const url of text.match(/https?:\/\/[^\s<>"')]+/g)||[])urls.add(url.replaceAll('&amp;','&'));
+      const local=this.localAttachmentTargets(text,file);
+      for(const asset of Object.values(this.settings.alistAssets||{}).flat())if(asset.publicUrl&&local.has(asset.originalLocalPath))urls.add(asset.publicUrl);
     }
     return [...urls];
   }
 
-  async performAListUpload(file, runOptions = {}) {
-    const automatic = !!runOptions.automatic;
-    const silentNoop = !!runOptions.silentNoop;
+  localAttachmentTargets(text,file) {
+    const targets=new Map(),refs=[...text.matchAll(/!?\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|[^\]]+)?\]\]/g)].map(m=>m[1]);
+    for(const m of text.matchAll(/!?\[[^\]]*\]\(([^)]+)\)/g))refs.push(m[1]);
+    for(const m of text.matchAll(/<(?:img|audio|video|source)\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi))refs.push(m[1]);
+    for(let raw of refs){raw=raw.trim();if(/^(?:https?:|data:|app:|obsidian:|mailto:)/i.test(raw))continue;raw=raw.replace(/^<|>$/g,'').split('#')[0];try{raw=decodeURIComponent(raw);}catch{}const target=this.app.metadataCache.getFirstLinkpathDest(raw,file.path);if(target instanceof TFile&&target.extension!=='md')targets.set(target.path,target);}
+    return targets;
+  }
+
+  localBackupFor(target,notePath) {
+    const identity=target.path+':'+target.stat.mtime+':'+target.stat.size;
+    return [...(this.settings.alistAssets?.[notePath]||[]),...Object.values(this.settings.alistAssets||{}).flat()].find(a=>a.originalLocalPath===target.path&&a.publicUrl&&(a.uploadIdentity===identity||a.localSize===target.stat.size&&Math.abs(a.localMtime-target.stat.mtime)<1));
+  }
+
+  async performAListUpload(file,runOptions={}) {
+    if(this.isMobileDevice())return false;
     try {
-      if(this.isMobileDevice())return false;
-      if(this.app.metadataCache&&!this.hasLocalAttachmentLinks(await this.app.vault.read(file),file))return false;
-      if(!await this.desktopUploadAvailable()){if(!automatic&&!silentNoop)new Notice('分享服务暂不可用，附件继续保留本地');return false;}
-      const settings=!!(this.settings.serverUrl&&this.settings.apiToken);
-      if (!settings) return false;
-
-      const token='';
-      let markdown = await this.app.vault.read(file);
-
-      const replacements = [];
-      const seenTargets = new Map();
-
-      const wikiRe =
-        /!\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g;
-      for (const match of [...markdown.matchAll(wikiRe)]) {
-        const raw = match[1].trim();
-        const alias = (match[2] || "").trim();
-        const target =
-          this.app.metadataCache.getFirstLinkpathDest(
-            raw,
-            file.path
-          );
-        if (
-          !(target instanceof TFile) ||
-          target.extension === "md" || isImageName(target.name)
-        )
-          continue;
-
-        let uploaded = seenTargets.get(target.path);
-        if (!uploaded) {
-          if (!automatic) {
-          new Notice(
-            "正在上传附件：" +
-              target.name,
-            2500
-          );
-          }
-          uploaded=await this.uploadFileToVPS(target);
-          seenTargets.set(target.path, uploaded);
+      const text=await this.app.vault.read(file),targets=this.localAttachmentTargets(text,file),uploaded=new Map();
+      for(const [localPath,target] of targets){
+        if(this.localBackupFor(target,file.path))continue;
+        if(!await this.desktopUploadAvailable())return false;
+        const localSize=target.stat.size,localMtime=target.stat.mtime;
+        const asset=await this.uploadFileToVPS(target);
+        // The note may have changed while bytes were uploading. Do not claim a removed reference.
+        if(!this.localAttachmentTargets(await this.app.vault.read(file),file).has(localPath)||target.stat.size!==localSize||target.stat.mtime!==localMtime){
+          this.recordAListAssetsForNote(file.path,new Map([[localPath,{...asset,localSize,localMtime}]]));
+          const orphan=this.settings.alistAssets[file.path].find(a=>a.remotePath===asset.remotePath);orphan.pendingDelete=true;orphan.deleteReason='link';
+          await this.saveData(this.settings);continue;
         }
-
-        const label = alias || target.name;
-        const replacement = aListReplacement(
-          target.name,
-          label,
-          uploaded.publicUrl,
-          isImageName(target.name)
-        );
-        replacements.push({
-          from: match[0],
-          to: replacement,
-        });
+        uploaded.set(localPath,{...asset,localSize,localMtime});
       }
-
-      const mdRe =
-        /(!?)\[([^\]]*)\]\(([^)]+)\)/g;
-      for (const match of [...markdown.matchAll(mdRe)]) {
-        const rawTarget = String(match[3] || "").trim();
-        if (
-          /^(?:https?:|data:|app:|obsidian:|mailto:)/i.test(
-            rawTarget
-          )
-        )
-          continue;
-
-        const cleanTarget = rawTarget
-          .replace(/^<|>$/g, "")
-          .split("#")[0]
-          .trim();
-        let decoded = cleanTarget;
-        try {
-          decoded = decodeURIComponent(cleanTarget);
-        } catch (_) {}
-
-        const target =
-          this.app.metadataCache.getFirstLinkpathDest(
-            decoded,
-            file.path
-          );
-        if (
-          !(target instanceof TFile) ||
-          target.extension === "md" || isImageName(target.name)
-        )
-          continue;
-
-        let uploaded = seenTargets.get(target.path);
-        if (!uploaded) {
-          if (!automatic) {
-          new Notice(
-            "正在上传附件：" +
-              target.name,
-            2500
-          );
-          }
-          uploaded=await this.uploadFileToVPS(target);
-          seenTargets.set(target.path, uploaded);
-        }
-
-        const embedded =
-          match[1] === "!" || isImageName(target.name);
-        const label = match[2] || target.name;
-        replacements.push({
-          from: match[0],
-          to: aListReplacement(
-            target.name,
-            label,
-            uploaded.publicUrl,
-            embedded
-          ),
-        });
-      }
-
-      if (!replacements.length) {
-        if (!silentNoop) {
-          new Notice(
-            "\u5f53\u524d\u7b14\u8bb0\u6ca1\u6709\u627e\u5230\u53ef\u4e0a\u4f20\u7684\u672c\u5730\u9644\u4ef6"
-          );
-        }
-        return false;
-      }
-
-      await this.app.vault.process(file, (latest) => {
-        for (const item of replacements) latest = latest.split(item.from).join(item.to);
-        markdown = latest;
-        return latest;
-      });
-      this.recordAListAssetsForNote(
-        file.path,
-        new Map([...seenTargets].filter(([, asset]) => markdown.includes(asset.publicUrl)))
-      );
-      if(automatic){this.settings.pendingUploadedShareRefresh ||= {};this.settings.pendingUploadedShareRefresh[file.path]=true;}
+      if(!uploaded.size)return false;
+      this.recordAListAssetsForNote(file.path,uploaded);
+      this.settings.pendingUploadedShareRefresh ||= {};this.settings.pendingUploadedShareRefresh[file.path]=true;
       await this.saveData(this.settings);
-      if(automatic)await this.retryUploadedShareRefresh();
-      new Notice(
-        (automatic
-          ? "\u5df2\u81ea\u52a8\u4e0a\u4f20 "
-          : "\u5df2\u4e0a\u4f20 ") +
-          seenTargets.size +
-          " 个附件，并替换为稳定公网链接",
-        automatic ? 4500 : 7000
-      );
-      return true;
-    } catch (error) {
-      console.error(
-        "Remote attachment upload failed",
-        error
-      );
-      new Notice(
-        (automatic ? "附件自动上传失败\uff1a" : "附件上传失败\uff1a") +
-          (error && error.message
-            ? error.message
-            : error),
-        9000
-      );
-      return false;
-    }
+      if(runOptions.automatic)await this.retryUploadedShareRefresh();
+      new Notice('已备份 '+uploaded.size+' 个附件到 VPS，本地引用保留',4500);return true;
+    }catch(error){console.error('Attachment backup failed',error);new Notice('附件备份失败，本地文件保留：'+error.message,9000);return false;}
   }
 
   recordAListAssetsForNote(notePath, uploadedMap) {
@@ -2092,6 +1969,8 @@ class PrivateSharePlugin extends Plugin {
         remotePath: uploaded.remotePath,
         publicUrl: uploaded.publicUrl || "",
         originalLocalPath: localPath || "",
+        localSize: uploaded.localSize,
+        localMtime: uploaded.localMtime,
         uploadedAt: new Date().toISOString(),
         seenInNote: true,
       });
@@ -2141,7 +2020,7 @@ class PrivateSharePlugin extends Plugin {
     if (!assets.length) return;
     const text = (await this.app.vault.read(file)).replaceAll("&amp;", "&");
     for (const asset of assets) {
-      if (asset.publicUrl && text.includes(asset.publicUrl)) {
+      if (asset.publicUrl && (text.includes(asset.publicUrl)||this.localAttachmentTargets(text,file).has(asset.originalLocalPath))) {
         asset.seenInNote = true; delete asset.pendingDelete;
       } else if (asset.seenInNote) {
         asset.pendingDelete = true; asset.deleteReason = "link";
@@ -2152,11 +2031,7 @@ class PrivateSharePlugin extends Plugin {
   }
 
   async verifyAListReferences() {
-    const urls = new Set();
-    for (const file of this.app.vault.getMarkdownFiles()) {
-      const text = await this.app.vault.read(file);
-      for (const url of text.match(/https?:\/\/[^\s<>"')]+/g) || []) urls.add(url.replaceAll("&amp;", "&"));
-    }
+    const urls=new Set(await this.collectVaultMediaUrls());
     const data = await this.api("/api/media/references", "POST", {urls:[...urls]});
     if (!Array.isArray(data.remotePaths) || data.unresolved !== false) throw new Error("存在未能核实的附件引用，已保留远程文件");
     return new Set(data.remotePaths.map(normalizeRemotePath));
@@ -2304,7 +2179,7 @@ class PrivateSharePlugin extends Plugin {
     for(const m of markdown.matchAll(/!?\[[^\]]*\]\(([^)]+)\)/g))refs.push(m[1]);
     for(const m of markdown.matchAll(/<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi))refs.push(m[1]);
     for(const raw of refs){
-      const target=resolve(raw);if(!target||images.has(target.path))continue;
+      const target=resolve(raw);if(!target||images.has(target.path)||this.localBackupFor(target,file.path))continue;
       if(images.size>=60||target.stat.size>16*1024**2||total+target.stat.size>48*1024**2)throw Error('分享图片最多 60 张、单张 16 MiB、合计 48 MiB；Vault 图片保留');
       const size=target.stat.size,mtime=target.stat.mtime,binary=await this.app.vault.readBinary(target);
       const current=await this.app.vault.adapter.stat(target.path);
@@ -2322,6 +2197,8 @@ class PrivateSharePlugin extends Plugin {
     const attachments=[...local.images.values()],uploads=[];
     const labelText=value=>String(value).replace(/[\[\]<>]/g,'');
     const placeholder=(target,label)=>{
+      const backup=this.localBackupFor(target,file.path);
+      if(backup)return aListReplacement(target.name,label||target.name,backup.publicUrl,true);
       const image=local.images.get(target.path);
       if(image)return aListReplacement(target.name,label||target.name,'{{ASSET_BASE}}/'+image.key,true);
       return '**'+labelText(label||target.name)+'（附件仅保存在本地，等待电脑上传）**';
@@ -2338,9 +2215,11 @@ class PrivateSharePlugin extends Plugin {
     });
     markdown=markdown.replace(/<img\b[^>]*\bsrc\s*=\s*(["'])([^"']+)\1[^>]*>/gi,(match,quote,raw)=>{
       const target=local.resolve(raw),image=target&&local.images.get(target.path);
-      return image?match.replace(quote+raw+quote,quote+'{{ASSET_BASE}}/'+image.key+quote):match;
+      const backup=target&&this.localBackupFor(target,file.path);
+      return backup?match.replace(quote+raw+quote,quote+htmlAttr(backup.publicUrl)+quote):image?match.replace(quote+raw+quote,quote+'{{ASSET_BASE}}/'+image.key+quote):match;
     });
-    markdown=markdown.replace(/\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g,(_m,target,alias)=>alias||target);
+    markdown=markdown.replace(/<(?:audio|video|source)\b[^>]*\bsrc\s*=\s*(["'])([^"']+)\1[^>]*>/gi,(match,quote,raw)=>{let link=raw.trim().replace(/^<|>$/g,'').split('#')[0];try{link=decodeURIComponent(link);}catch{}const target=this.app.metadataCache.getFirstLinkpathDest(link,file.path),backup=target instanceof TFile&&this.localBackupFor(target,file.path);return backup?match.replace(quote+raw+quote,quote+htmlAttr(backup.publicUrl)+quote):match;});
+    markdown=markdown.replace(/\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g,(_m,raw,alias)=>{const target=this.app.metadataCache.getFirstLinkpathDest(raw.trim(),file.path),backup=target instanceof TFile&&this.localBackupFor(target,file.path);return backup?aListReplacement(target.name,alias||target.name,backup.publicUrl,false):alias||raw;});
 
     const payloadOptions = {
       passwordProtected: !!(
@@ -2931,7 +2810,7 @@ class PrivateShareSettingTab extends PluginSettingTab {
     });
 
     new Setting(c).setName('图片保存方式').setDesc('图片始终保留在 Vault，本地直接显示；发布或更新分享时复制到分享服务器磁盘，供网页显示。不经过 AList/R2，不改写 Vault 图片链接。');
-    new Setting(c).setName('附件上传方式').setDesc(this.plugin.isMobileDevice()?'手机仅同步本地附件，不上传；同步到电脑后由电脑直传 VPS。':'视频、音频和文档由电脑直接上传到 VPS；启动、同步完成及每 5 分钟检查待上传附件。支持分片、进度显示与失败后重试，无需 AList。');
+    new Setting(c).setName('附件上传方式').setDesc(this.plugin.isMobileDevice()?'手机仅同步本地附件，不上传；同步到电脑后由电脑直传 VPS。':'图片、视频、音频和文档保留本地显示，由电脑直传 VPS 保存副本；分享时使用 VPS 链接。启动、同步完成及每 5 分钟检查未备份附件，支持分片、进度与重试，无需 AList。');
     new Setting(c).setName('局域网分享服务（可选）').setDesc('电脑在家生成附件短链时优先使用；不是附件上传地址。留空使用公网分享服务。').addText(text=>text.setPlaceholder('http://192.168.x.x:8090').setValue(this.plugin.settings.localUploadUrl||'').onChange(async value=>{this.plugin.settings.localUploadUrl=value.trim();await this.plugin.saveData(this.plugin.settings);}));
     new Setting(c).setName('检查待上传附件').setDesc('只上传笔记引用的视频、音频和文档；图片保持本地链接。').addButton(b=>b.setButtonText('立即检查').onClick(()=>this.plugin.scanDesktopAttachments({manual:true})));
 

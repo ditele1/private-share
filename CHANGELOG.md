@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.7
+
+- Keep attachment references local after desktop VPS backup; published pages use the verified remote copy.
+- Reuse unchanged backups and protect VPS files referenced by local notes during orphan cleanup.
+- Back up desktop images directly to VPS as well; keep mobile uploads disabled and local image display intact.
+
 ## 0.6.6
 
 - Prefer the optional local share service for media tickets, reference checks and deletion on desktop; fall back to the public share service when the local endpoint is unavailable. Attachment bytes continue to upload directly to the HTTPS VPS.
