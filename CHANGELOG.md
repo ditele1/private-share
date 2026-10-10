@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0
+
+- Simplify settings to the share address, connection key and encrypted configuration import/export.
+- Remove AList, LAN controls, backend selectors and customer-specific invitation tools from the plugin.
+- Keep desktop VPS backups, local attachment display, share state sync, expiry management and discussion.
+- Make attachment cleanup manual and confirmed; preserve legacy ownership and pending upload records during migration.
+- Retry transient public reads and idempotent media requests without replaying new-share publication.
+
 ## 0.6.7
 
 - Keep attachment references local after desktop VPS backup; published pages use the verified remote copy.

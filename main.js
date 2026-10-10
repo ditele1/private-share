@@ -10,25 +10,6 @@ const {
   Modal,
 } = require("obsidian");
 
-const DEFAULT_SETTINGS = {
-  serverUrl: "",
-  localUploadUrl: "",
-  apiToken: "",
-  attachmentUploadBackend: "vps",
-  alistLanUrl: "",
-  alistPublicUrl: "",
-  alistUsername: "",
-  alistPassword: "",
-  alistToken: "",
-  alistRootPath: "/Obsidian",
-  alistUseDateFolders: true,
-  alistAutoUpload: true,
-  alistDeleteRemoteOnNoteDelete: true,
-  alistDeleteRemoteOnLinkRemove: true,
-  alistConfirmRemoteDelete: true,
-  alistAssets: {},
-  shares: {},
-};
 
 function arrayBufferToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
@@ -48,42 +29,6 @@ function normalizeRemotePath(value) {
   if (!pathValue) return "/";
   if (!pathValue.startsWith("/")) pathValue = "/" + pathValue;
   return pathValue.replace(/\/+/g, "/").replace(/\/+$/, "") || "/";
-}
-function encodeUrlPath(value) {
-  return normalizeRemotePath(value)
-    .split("/")
-    .map((part, index) =>
-      index === 0 ? "" : encodeURIComponent(part)
-    )
-    .join("/");
-}
-function safeRemoteName(name) {
-  const value = String(name || "file").trim();
-  const dot = value.lastIndexOf(".");
-  const ext = dot > 0 ? value.slice(dot).toLowerCase() : "";
-  const stem = dot > 0 ? value.slice(0, dot) : value;
-  const cleaned = stem
-    .normalize("NFKC")
-    .replace(/[^\p{L}\p{N}._-]+/gu, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 72) || "file";
-  return cleaned + ext;
-}
-function uploadStamp() {
-  const d = new Date();
-  const two = (n) => String(n).padStart(2, "0");
-  return (
-    d.getFullYear() +
-    two(d.getMonth() + 1) +
-    two(d.getDate()) +
-    "-" +
-    two(d.getHours()) +
-    two(d.getMinutes()) +
-    two(d.getSeconds())
-  );
-}
-function randomShortId() {
-  return Math.random().toString(36).slice(2, 8);
 }
 function mimeFromName(name) {
   const ext = name.split(".").pop()?.toLowerCase() || "";
@@ -126,7 +71,7 @@ function htmlAttr(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
 }
-function aListReplacement(
+function attachmentMarkup(
   name,
   label,
   publicUrl,
@@ -283,7 +228,7 @@ class ShareOptionsModal extends Modal {
       });
 
     new Setting(c)
-      .setName("\u5141\u8bb8\u5ba2\u6237\u786e\u8ba4 / \u8bc4\u8bba")
+      .setName("允许确认 / 评论")
       .setDesc(
         "\u5f00\u542f\u540e\u53ef\u4ee5\u4e3a\u4e0d\u540c\u5ba2\u6237\u751f\u6210\u4e13\u5c5e\u9080\u8bf7\u94fe\u63a5\u3002\u5ba2\u6237\u65e0\u9700\u6ce8\u518c\uff0c\u9996\u6b21\u586b\u5199\u59d3\u540d\u548c\u516c\u53f8\u540e\u5373\u53ef\u786e\u8ba4\u6536\u5230\u3001\u63d0\u51fa\u4fee\u6539\u610f\u89c1\u548c\u56de\u590d\u8ba8\u8bba\u3002\u666e\u901a\u5206\u4eab\u94fe\u63a5\u4ecd\u7136\u4fdd\u6301\u53ea\u8bfb\u3002"
       )
@@ -328,230 +273,6 @@ class ShareOptionsModal extends Modal {
         this.close();
         await this.onSubmit(options);
       });
-  }
-
-  onClose() {
-    this.contentEl.empty();
-  }
-}
-
-class CreateInviteModal extends Modal {
-  constructor(app, plugin, share, onCreated) {
-    super(app);
-    this.plugin = plugin;
-    this.share = share;
-    this.onCreated = onCreated;
-    this.label = "";
-    this.company = "";
-  }
-
-  onOpen() {
-    const c = this.contentEl;
-    c.empty();
-    c.createEl("h2", { text: "\u751f\u6210\u5ba2\u6237\u4e13\u5c5e\u94fe\u63a5" });
-    c.createEl("p", {
-      text:
-        "\u59d3\u540d\u548c\u516c\u53f8\u53ea\u7528\u4e8e\u9884\u586b\u3002\u5ba2\u6237\u9996\u6b21\u6253\u5f00\u65f6\u4ecd\u53ef\u786e\u8ba4\u6216\u4fee\u6539\u81ea\u5df1\u7684\u59d3\u540d\u548c\u516c\u53f8\u3002",
-      cls: "private-share-muted",
-    });
-
-    new Setting(c)
-      .setName("\u5ba2\u6237\u59d3\u540d / \u5907\u6ce8")
-      .setDesc("\u4f8b\u5982\uff1a\u5f20\u5de5")
-      .addText((text) =>
-        text.onChange((value) => {
-          this.label = value;
-        })
-      );
-
-    new Setting(c)
-      .setName("\u516c\u53f8")
-      .setDesc("\u4f8b\u5982\uff1aABC Motor")
-      .addText((text) =>
-        text.onChange((value) => {
-          this.company = value;
-        })
-      );
-
-    const footer = c.createDiv({
-      cls: "private-share-modal-footer",
-    });
-    footer
-      .createEl("button", { text: "\u53d6\u6d88" })
-      .addEventListener("click", () => this.close());
-    footer
-      .createEl("button", {
-        text: "\u751f\u6210\u94fe\u63a5",
-        cls: "mod-cta",
-      })
-      .addEventListener("click", async () => {
-        try {
-          const invite = await this.plugin.createInvite(
-            this.share,
-            this.label,
-            this.company
-          );
-          this.close();
-          await this.plugin.copyUrl(invite.url, false);
-          new Notice("\u5ba2\u6237\u4e13\u5c5e\u94fe\u63a5\u5df2\u751f\u6210\u5e76\u590d\u5236");
-          if (this.onCreated) await this.onCreated();
-        } catch (error) {
-          new Notice(
-            "\u751f\u6210\u5ba2\u6237\u94fe\u63a5\u5931\u8d25\uff1a" +
-              (error && error.message ? error.message : error),
-            8000
-          );
-        }
-      });
-  }
-
-  onClose() {
-    this.contentEl.empty();
-  }
-}
-
-class InviteManagerModal extends Modal {
-  constructor(app, plugin, notePath, share) {
-    super(app);
-    this.plugin = plugin;
-    this.notePath = notePath;
-    this.share = share;
-  }
-
-  async onOpen() {
-    await this.render();
-  }
-
-  async render() {
-    const c = this.contentEl;
-    c.empty();
-    try {
-      this.share = await this.plugin.claimManageShareForPath(
-        this.notePath,
-        this.share
-      );
-    } catch (error) {
-      c.createEl("h2", { text: "\u5ba2\u6237\u4e13\u5c5e\u94fe\u63a5" });
-      c.createEl("p", {
-        text:
-          "\u8bfb\u53d6\u5206\u4eab\u4fe1\u606f\u5931\u8d25\uff1a" +
-          (error && error.message ? error.message : error),
-      });
-      return;
-    }
-    c.createEl("h2", { text: "\u5ba2\u6237\u4e13\u5c5e\u94fe\u63a5" });
-    c.createEl("p", {
-      text: this.share.title || this.notePath,
-      cls: "private-share-muted",
-    });
-
-
-    const top = c.createDiv({ cls: "private-share-actions" });
-    top
-      .createEl("button", {
-        text: "\uff0b \u65b0\u5efa\u5ba2\u6237\u94fe\u63a5",
-        cls: "mod-cta",
-      })
-      .addEventListener("click", () => {
-        new CreateInviteModal(
-          this.app,
-          this.plugin,
-          this.share,
-          async () => this.render()
-        ).open();
-      });
-
-    let invites = [];
-    try {
-      invites = await this.plugin.listInvites(this.share);
-    } catch (error) {
-      c.createEl("p", {
-        text:
-          "\u8bfb\u53d6\u5ba2\u6237\u94fe\u63a5\u5931\u8d25\uff1a" +
-          (error && error.message ? error.message : error),
-      });
-      return;
-    }
-
-    if (!invites.length) {
-      c.createEl("p", {
-        text: "\u8fd8\u6ca1\u6709\u5ba2\u6237\u4e13\u5c5e\u94fe\u63a5\u3002",
-        cls: "private-share-muted",
-      });
-      return;
-    }
-
-    const list = c.createDiv({
-      cls: "private-share-manager",
-    });
-
-    for (const invite of invites) {
-      const row = list.createDiv({
-        cls: "private-share-manager-row",
-      });
-      const info = row.createDiv({
-        cls: "private-share-manager-info",
-      });
-
-      info.createEl("strong", {
-        text: invite.label || "\u672a\u547d\u540d\u5ba2\u6237",
-      });
-      if (invite.company) {
-        info.createEl("div", { text: invite.company });
-      }
-      info.createEl("div", {
-        text:
-          "\u521b\u5efa\uff1a" +
-          formatTime(invite.createdAt) +
-          (invite.lastOpenedAt
-            ? " \u00b7 \u6700\u8fd1\u6253\u5f00\uff1a" + formatTime(invite.lastOpenedAt)
-            : " \u00b7 \u5c1a\u672a\u6253\u5f00"),
-        cls: "private-share-muted",
-      });
-
-      if (invite.active === false) {
-        info.createSpan({
-          text: "\u5df2\u64a4\u9500",
-          cls: "private-share-badge",
-        });
-      }
-
-      const actions = row.createDiv({
-        cls: "private-share-manager-actions",
-      });
-
-      if (invite.active !== false && invite.url) {
-        actions
-          .createEl("button", { text: "\u590d\u5236\u94fe\u63a5" })
-          .addEventListener("click", async () => {
-            await this.plugin.copyUrl(invite.url);
-          });
-
-        actions
-          .createEl("button", {
-            text: "\u64a4\u9500",
-            cls: "mod-warning",
-          })
-          .addEventListener("click", async () => {
-            try {
-              await this.plugin.revokeInvite(
-                this.share,
-                invite.id
-              );
-              new Notice("\u5ba2\u6237\u94fe\u63a5\u5df2\u64a4\u9500");
-              await this.render();
-            } catch (error) {
-              new Notice(
-                "\u64a4\u9500\u5931\u8d25\uff1a" +
-                  (error && error.message
-                    ? error.message
-                    : error),
-                8000
-              );
-            }
-          });
-      }
-    }
   }
 
   onClose() {
@@ -725,36 +446,35 @@ class DiscussionModal extends Modal {
   }
 }
 
-const PROFILE_FIELDS = {
-  attachmentUploadBackend: "string", serverUrl: "string", apiToken: "string", alistPublicUrl: "string",
-  alistUsername: "string", alistPassword: "string", alistToken: "string", alistRootPath: "string",
-  localUploadUrl: "string", alistLanUrl: "string", alistUseDateFolders: "boolean",
-  alistAutoUpload: "boolean", alistDeleteRemoteOnNoteDelete: "boolean",
-  alistDeleteRemoteOnLinkRemove: "boolean", alistConfirmRemoteDelete: "boolean",
-};
-const PROFILE_LAN = ["localUploadUrl", "alistLanUrl"];
-const PROFILE_PREFS = Object.keys(PROFILE_FIELDS).filter(k=>PROFILE_FIELDS[k]==="boolean");
+const LEGACY_PROFILE_FIELDS=['attachmentUploadBackend','alistPublicUrl','alistUsername','alistPassword','alistToken','alistRootPath','localUploadUrl','alistLanUrl','alistUseDateFolders','alistAutoUpload','alistDeleteRemoteOnNoteDelete','alistDeleteRemoteOnLinkRemove','alistConfirmRemoteDelete'];
+const PROFILE_FIELDS={serverUrl:'string',apiToken:'string'};
+function migrateSettings(raw={}) {
+  return {
+    serverUrl:typeof raw.serverUrl==='string'?raw.serverUrl:'',
+    apiToken:typeof raw.apiToken==='string'?raw.apiToken:'',
+    shares:raw.shares||{},
+    attachmentAssets:raw.attachmentAssets||raw.alistAssets||{},
+    pendingUploads:raw.pendingUploads||raw.pendingAListUploads||{},
+    pendingUploadedShareRefresh:raw.pendingUploadedShareRefresh||{},
+  };
+}
 const PROFILE_AAD = "obsidian-private-share-config:1:AES-256-GCM:PBKDF2-SHA256:600000";
-function portableConfig(settings, options={}) {
-  const out={};
-  for(const [key,type] of Object.entries(PROFILE_FIELDS)){
-
-    if(options.lan===false&&PROFILE_LAN.includes(key))continue;
-    if(options.preferences===false&&PROFILE_PREFS.includes(key))continue;
-    if(typeof settings[key]===type)out[key]=settings[key];
-  }
-  return validatePortableConfig(out);
+function portableConfig(settings) {
+  const out={};for(const [key,type]of Object.entries(PROFILE_FIELDS))if(typeof settings[key]===type)out[key]=settings[key];return validatePortableConfig(out);
 }
 function validatePortableConfig(config) {
-  if(!config||typeof config!=="object"||Array.isArray(config))throw Error("配置格式不正确");
-  for(const [key,value] of Object.entries(config)){
-    if(!Object.prototype.hasOwnProperty.call(PROFILE_FIELDS,key)||typeof value!==PROFILE_FIELDS[key])throw Error("配置包含不支持的字段");
-    if(typeof value==="string"&&value.length>4096)throw Error("配置字段过长");
-    if(/Url$/.test(key)&&value){let u;try{u=new URL(value)}catch{throw Error("配置地址不正确")}
-      if(!["http:","https:"].includes(u.protocol)||u.username||u.password||u.hash)throw Error("配置地址不正确");}
+  if(!config||typeof config!=='object'||Array.isArray(config))throw Error('配置格式不正确');
+  const out={};
+  for(const [key,value]of Object.entries(config)){
+    if(LEGACY_PROFILE_FIELDS.includes(key)){if(!['string','boolean'].includes(typeof value))throw Error('旧配置字段不正确');continue;}
+    if(!Object.prototype.hasOwnProperty.call(PROFILE_FIELDS,key)||typeof value!==PROFILE_FIELDS[key])throw Error('配置包含不支持的字段');
+    if(value.length>4096)throw Error('配置字段过长');
+    if(key==='serverUrl'&&value){let u;try{u=new URL(value)}catch{throw Error('配置地址不正确')};if(!['http:','https:'].includes(u.protocol)||u.username||u.password||u.search||u.hash)throw Error('配置地址不正确');}
+    out[key]=value;
   }
-  if(config.attachmentUploadBackend&&!['alist','worker','vps'].includes(config.attachmentUploadBackend))throw Error('Invalid attachment upload backend');return {...config};
+  return out;
 }
+
 function profileBytes(value, length) {
   if(typeof value!=="string"||value.length>350000||!/^[A-Za-z0-9+/]*={0,2}$/.test(value))throw Error("配置文件格式不正确");
   const bytes=Uint8Array.from(atob(value),c=>c.charCodeAt(0));
@@ -793,6 +513,19 @@ class ActionConfirmModal extends Modal {
     new Setting(c).addButton(b=>b.setButtonText("取消").onClick(()=>this.close())).addButton(b=>b.setButtonText("确认").setWarning().onClick(()=>{this.accepted=true;this.close()}));}
   onClose(){this.contentEl.empty();this.done(this.accepted)}
 }
+class AttachmentCleanupModal extends Modal {
+  constructor(app,plugin,candidates){super(app);Object.assign(this,{plugin,candidates});}
+  onOpen(){
+    const c=this.contentEl;c.createEl('h2',{text:'清理无引用的 VPS 副本'});
+    c.createEl('p',{text:'发现 '+this.candidates.length+' 条本地未引用记录。确认后还会检查分享网页与其他笔记；无法核实的文件不会删除。删除 VPS 文件不可撤销，本地原件保留。'});
+    const list=c.createEl('ul');for(const {notePath,asset}of this.candidates)list.createEl('li',{text:(asset.originalLocalPath||asset.remotePath)+' · '+notePath});
+    new Setting(c).addButton(b=>b.setButtonText('取消').onClick(()=>this.close())).addButton(b=>b.setButtonText('确认检查并清理').setWarning().onClick(async()=>{
+      b.setDisabled(true);try{for(const {asset}of this.candidates){asset.pendingDelete=true;asset.deleteReason='manual';}await this.plugin.saveData(this.plugin.settings);await this.plugin.retryAttachmentCleanup({manual:true});const remaining=this.candidates.filter(({notePath,asset})=>(this.plugin.settings.attachmentAssets[notePath]||[]).includes(asset));new Notice('检查完成：'+(this.candidates.length-remaining.length)+' 条已清理，'+remaining.length+' 条仍有引用或需重试',8000);this.close();}catch(e){new Notice('清理未完成：'+e.message);b.setDisabled(false);}
+    }));
+  }
+  onClose(){this.contentEl.empty();}
+}
+
 class ShareExpiryModal extends Modal {
   constructor(app,plugin,notePath,share,done){super(app);Object.assign(this,{plugin,notePath,share,done});this.choice="keep";this.custom="";}
   onOpen(){const c=this.contentEl;c.createEl("h2",{text:"修改分享到期时间"});c.createEl("p",{text:"当前："+(this.share.expiresAt?formatTime(this.share.expiresAt):"永久有效")});
@@ -808,12 +541,10 @@ class ShareExpiryModal extends Modal {
   onClose(){this.contentEl.empty()}
 }
 class ConfigTransferModal extends Modal {
-  constructor(app,plugin,mode){super(app);Object.assign(this,{plugin,mode});this.password="";this.confirm="";this.text="";this.lan=false;this.preferences=true;this.config=null;this.busy=false;}
+  constructor(app,plugin,mode){super(app);Object.assign(this,{plugin,mode});this.password="";this.confirm="";this.text="";this.config=null;this.busy=false;}
   onOpen(){const c=this.contentEl;c.createEl("h2",{text:this.mode==="export"?"导出加密配置":this.mode==="restore"?"撤销上次配置导入":"导入加密配置"});
     if(this.mode==="export"){
-      c.createEl("p",{text:"导出连接地址、认证信息和使用偏好。文件加密后可传给自己的新设备。"});
-      new Setting(c).setName("包含局域网地址").setDesc("新设备默认使用公网连接；同一局域网可以勾选。").addToggle(t=>t.setValue(false).onChange(v=>this.lan=v));
-      new Setting(c).setName("包含上传和清理偏好").addToggle(t=>t.setValue(true).onChange(v=>this.preferences=v));
+      c.createEl("p",{text:"导出分享地址和连接密钥。文件加密后可传给自己的新设备。"});
     }else if(this.mode==="import"){
       c.createEl("p",{text:"选择配置文件或粘贴加密文本，解密预览后再应用。已有附件记录与待处理任务会保留。"});
       const picker=c.createEl("input",{attr:{type:"file",accept:".json,application/json"}});
@@ -829,7 +560,7 @@ class ConfigTransferModal extends Modal {
     const action=new Setting(c).addButton(b=>b.setButtonText("取消").onClick(()=>this.close()));
     if(this.mode==="export")action.addButton(b=>b.setButtonText("生成加密配置").setCta().onClick(()=>this.run(b,async()=>{
       if(this.password!==this.confirm)throw Error("两次密码不一致");
-      this.text=await encryptProfile(portableConfig(this.plugin.settings,{lan:this.lan,preferences:this.preferences}),this.password,this.plugin.manifest.version);
+      this.text=await encryptProfile(portableConfig(this.plugin.settings),this.password,this.plugin.manifest.version);
       this.result.empty();this.result.createEl("p",{text:"加密配置已生成，请保存文件或复制加密文本。"});
       new Setting(this.result).addButton(v=>v.setButtonText("保存到 Vault").onClick(()=>this.run(v,async()=>{const name="private-share-config-"+new Date().toISOString().replace(/[:.]/g,"-")+".json";await this.app.vault.create(name,this.text);new Notice("已保存："+name)}))).addButton(v=>v.setButtonText("复制加密配置").onClick(async()=>{try{await navigator.clipboard.writeText(this.text);new Notice("加密配置已复制")}catch{new Notice("复制失败，请保存到 Vault")}}));
     })));
@@ -837,9 +568,8 @@ class ConfigTransferModal extends Modal {
       action.addButton(b=>b.setButtonText("解密预览").onClick(()=>this.run(b,async()=>{
         const text=this.mode==="restore"?await this.app.vault.adapter.read(this.plugin.profileBackupPath()):this.text;
         this.config=await decryptProfile(text,this.password);this.preview.empty();
-        for(const key of ["serverUrl","alistPublicUrl","alistLanUrl"])if(Object.prototype.hasOwnProperty.call(this.config,key))new Setting(this.preview).setName({serverUrl:"分享服务",alistPublicUrl:"AList 公网",localUploadUrl:"局域网上传",alistLanUrl:"AList 局域网",alistRootPath:"上传目录"}[key]).setDesc(this.config[key]||"未配置");
-        this.preview.createEl("p",{text:"认证信息已解密，将在确认后应用；不显示明文。"});
-        for(const key of PROFILE_PREFS)if(Object.prototype.hasOwnProperty.call(this.config,key))new Setting(this.preview).setName({alistUseDateFolders:"按日期存储",alistAutoUpload:"自动上传",alistDeleteRemoteOnNoteDelete:"删除笔记时清理附件",alistDeleteRemoteOnLinkRemove:"删除引用时清理附件",alistConfirmRemoteDelete:"清理前确认"}[key]).setDesc(this.config[key]?"开启":"关闭");
+        new Setting(this.preview).setName("分享地址").setDesc(this.config.serverUrl||"未配置");
+        this.preview.createEl("p",{text:"连接密钥已解密，确认后应用，不显示明文。"});
       })));
       action.addButton(b=>b.setButtonText(this.mode==="restore"?"确认恢复":"确认应用").setCta().onClick(()=>this.run(b,async()=>{
         if(!this.config)throw Error("请先解密预览配置");
@@ -848,8 +578,7 @@ class ConfigTransferModal extends Modal {
         let connected=false;try{await this.plugin.api("/api/shares","GET");connected=true}catch{}
         if(connected)await this.plugin.syncAllSharesFromServer({silent:true});
         this.result.empty();this.result.createEl("p",{text:connected?"分享服务已连接；已同步 "+Object.keys(this.plugin.settings.shares||{}).length+" 条分享记录。":"配置已保存，分享服务暂时连接失败。可以关闭弹窗后重试或撤销导入。"});
-        const alist=normalizeBase(this.plugin.settings.alistPublicUrl||this.plugin.settings.alistLanUrl);
-        if(alist){try{const r=await requestUrl({url:alist+"/api/public/settings",throw:false});this.result.createEl("p",{text:r.status===200?"AList 服务可访问。":"AList 暂时无法访问，请检查地址。"})}catch{this.result.createEl("p",{text:"AList 暂时无法访问，请检查网络。"})}}
+        new Setting(this.result).addButton(v=>v.setButtonText("撤销本次导入").onClick(()=>new ConfigTransferModal(this.app,this.plugin,"restore").open()));
         this.config=null;this.preview.empty();new Notice("配置已应用");
       })));
     }
@@ -872,8 +601,8 @@ class ShareManagerModal extends Modal {
       button("复制链接",async()=>{await this.plugin.copyResolvedShareUrl(notePath,share,false);new Notice("分享链接已复制")});
       button("修改到期时间",()=>new ShareExpiryModal(this.app,this.plugin,notePath,share,()=>this.render()).open());
       const file=this.app.vault.getAbstractFileByPath(notePath);if(file instanceof TFile)button("更新正文",()=>{this.close();this.plugin.openShareOptions(file,"update")});
-      if(share.discussionEnabled){button("客户链接",()=>new InviteManagerModal(this.app,this.plugin,notePath,share).open());button("查看讨论",()=>new DiscussionModal(this.app,this.plugin,notePath,share).open());}
-      button("删除分享",async()=>{const yes=await new Promise(resolve=>new ActionConfirmModal(this.app,"删除分享","此笔记的所有历史分享和客户链接将失效，相关讨论会删除。Vault 原笔记和 AList/R2 自动上传的原附件会保留。",resolve).open());if(yes&&await this.plugin.unshareByPath(notePath,false)){this.render();new Notice("分享已删除")}}).addClass("mod-warning");
+      if(share.discussionEnabled){button("查看讨论",()=>new DiscussionModal(this.app,this.plugin,notePath,share).open());}
+      button("删除分享",async()=>{const yes=await new Promise(resolve=>new ActionConfirmModal(this.app,"删除分享","此笔记的分享链接将失效，相关讨论会删除。本地原笔记和 VPS 附件副本保留。",resolve).open());if(yes&&await this.plugin.unshareByPath(notePath,false)){this.render();new Notice("分享已删除")}}).addClass("mod-warning");
     }
   }
   onClose(){this.contentEl.empty()}
@@ -885,9 +614,9 @@ class PrivateSharePlugin extends Plugin {
   async applyPortableConfig(config,password,options={}) {
     config=validatePortableConfig(config);
     if(!options.restore&&(!config.serverUrl||!config.apiToken))throw Error("配置缺少分享服务地址或 API Token");
-    if(this.configTransferRunning||this.alistUploadJobs?.size||this.alistCleanupRunning||this.fullShareSyncRunning||this.alistAutoRunning?.size)throw Error("上传、清理或同步正在进行，请稍后再试");
-    const hasRecords=Object.keys(this.settings.shares||{}).length||Object.keys(this.settings.alistAssets||{}).length||Object.keys(this.settings.pendingAListUploads||{}).length;
-    const changedService=["serverUrl","alistPublicUrl","apiToken"].some(k=>Object.prototype.hasOwnProperty.call(config,k)&&this.settings[k]&&normalizeBase(this.settings[k])!==normalizeBase(config[k]));
+    if(this.configTransferRunning||this.backupJobs?.size||this.attachmentCleanupRunning||this.fullShareSyncRunning||this.backupRunning?.size)throw Error("上传、清理或同步正在进行，请稍后再试");
+    const hasRecords=Object.keys(this.settings.shares||{}).length||Object.keys(this.settings.attachmentAssets||{}).length||Object.keys(this.settings.pendingUploads||{}).length;
+    const changedService=["serverUrl","apiToken"].some(k=>Object.prototype.hasOwnProperty.call(config,k)&&this.settings[k]&&normalizeBase(this.settings[k])!==normalizeBase(config[k]));
     if(hasRecords&&changedService&&!options.restore)throw Error("当前设备已有分享或附件记录，不能直接导入另一服务的配置；请在新的 Vault 中配置");
     this.configTransferRunning=true;this.shareStateRevision=(this.shareStateRevision||0)+1;
     const before=this.settings;
@@ -909,14 +638,10 @@ class PrivateSharePlugin extends Plugin {
   }
 
   async onload() {
-    this.settings = Object.assign(
-      {},
-      DEFAULT_SETTINGS,
-      await this.loadData()
-    );
+    this.settings=migrateSettings(await this.loadData()||{});
     if (!this.settings.shares) this.settings.shares = {};
     this.app.workspace.onLayoutReady(async()=>{
-      this.settings.attachmentUploadBackend='vps';
+
       await this.saveData(this.settings);
       this.scheduleDesktopUploadScan();
     });
@@ -924,10 +649,10 @@ class PrivateSharePlugin extends Plugin {
     this.registerEvent(this.app.metadataCache.on('resolved',()=>this.scheduleDesktopUploadScan()));
     this.registerEvent(this.app.vault.on('create',()=>this.scheduleDesktopUploadScan()));
     this.register(()=>{if(this.desktopScanTimer)window.clearTimeout(this.desktopScanTimer);this.desktopUploadsStopped=true;});
-    this.addCommand({id:'upload-synced-local-attachments',name:'电脑检查并上传已同步的本地附件',callback:()=>this.scanDesktopAttachments({manual:true})});
-    this.alistAutoTimers = new Map();
-    this.alistAutoRunning = new Set();
-    this.alistReferenceCleanupTimers = new Map();
+    this.addCommand({id:'upload-synced-local-attachments',name:'检查附件备份并重试',callback:()=>this.scanDesktopAttachments({manual:true})});
+    this.backupTimers = new Map();
+    this.backupRunning = new Set();
+    this.referenceTimers = new Map();
     this.privateShareStateSyncTimers = new Map();
     this.shareStateRevision = 0;
     this.registerInterval(window.setInterval(() => {
@@ -937,10 +662,9 @@ class PrivateSharePlugin extends Plugin {
       if (!document.hidden) this.syncAllSharesFromServer({silent:true});
     });
     this.registerDomEvent(window, "focus", () => this.syncAllSharesFromServer({silent:true}));
-    this.registerInterval(window.setInterval(() => this.retryAListCleanup(), 60000));
-    this.addCommand({id:"retry-remote-attachment-cleanup",name:"重试待清理的远程附件",callback:()=>this.retryAListCleanup()});
+    this.addCommand({id:"cleanup-unused-attachments",name:"检查并清理无引用附件",callback:()=>this.openAttachmentCleanup()});
     this.register(() => {
-      for (const map of [this.alistAutoTimers,this.alistReferenceCleanupTimers,this.privateShareStateSyncTimers]) for (const timer of map.values()) window.clearTimeout(timer);
+      for (const map of [this.backupTimers,this.referenceTimers,this.privateShareStateSyncTimers]) for (const timer of map.values()) window.clearTimeout(timer);
     });
 
     this.registerEvent(
@@ -1047,31 +771,8 @@ class PrivateSharePlugin extends Plugin {
     });
 
     this.addCommand({
-      id: "manage-current-customer-links",
-      name: "\u7ba1\u7406\u5f53\u524d\u7b14\u8bb0\u7684\u5ba2\u6237\u94fe\u63a5",
-      checkCallback: (checking) => {
-        const file = this.app.workspace.getActiveFile();
-        if (
-          !(file instanceof TFile) ||
-          file.extension !== "md"
-        )
-          return false;
-        const share = this.settings.shares[file.path] || {};
-        if (!checking) {
-          new InviteManagerModal(
-            this.app,
-            this,
-            file.path,
-            share
-          ).open();
-        }
-        return true;
-      },
-    });
-
-    this.addCommand({
       id: "view-current-discussion",
-      name: "\u67e5\u770b\u5f53\u524d\u7b14\u8bb0\u7684\u5ba2\u6237\u8ba8\u8bba",
+      name: "查看当前笔记的讨论",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
         if (
@@ -1103,23 +804,6 @@ class PrivateSharePlugin extends Plugin {
         )
           return false;
         if (!checking) this.unshareFile(file);
-        return true;
-      },
-    });
-
-    this.addCommand({
-      id: "upload-current-note-attachments-to-alist",
-      name: "上传当前笔记附件到远程存储",
-      checkCallback: (checking) => {
-        const file = this.app.workspace.getActiveFile();
-        if (
-          !(file instanceof TFile) ||
-          file.extension !== "md"
-        )
-          return false;
-        if (!checking) {
-          this.uploadCurrentNoteAttachmentsToAList(file);
-        }
         return true;
       },
     });
@@ -1202,20 +886,7 @@ class PrivateSharePlugin extends Plugin {
 
               menu.addItem((item) =>
                 item
-                  .setTitle("\u5ba2\u6237\u4e13\u5c5e\u94fe\u63a5")
-                  .setIcon("users")
-                  .onClick(() =>
-                    new InviteManagerModal(
-                      this.app,
-                      this,
-                      file.path,
-                      existing
-                    ).open()
-                  )
-              );
-              menu.addItem((item) =>
-                item
-                  .setTitle("\u67e5\u770b\u5ba2\u6237\u8ba8\u8bba")
+                  .setTitle("查看讨论")
                   .setIcon("messages-square")
                   .onClick(() =>
                     new DiscussionModal(
@@ -1257,11 +928,11 @@ class PrivateSharePlugin extends Plugin {
           }
 
           const assets =
-            this.settings.alistAssets &&
-            this.settings.alistAssets[oldPath];
+            this.settings.attachmentAssets &&
+            this.settings.attachmentAssets[oldPath];
           if (assets) {
-            delete this.settings.alistAssets[oldPath];
-            this.settings.alistAssets[file.path] =
+            delete this.settings.attachmentAssets[oldPath];
+            this.settings.attachmentAssets[file.path] =
               assets;
             changed = true;
           }
@@ -1279,9 +950,9 @@ class PrivateSharePlugin extends Plugin {
         (file) => {
           if (!(file instanceof TFile)) return;
           if (file.extension !== "md") {this.scheduleDesktopUploadScan();return;}
-          this.scheduleAListReferenceCleanup(file);
-          if (this.settings.alistAutoUpload === false) return;
-          this.scheduleAListAutoUpload(file);
+          this.scheduleReferenceCheck(file);
+
+          this.scheduleAttachmentBackup(file);
         }
       )
     );
@@ -1292,79 +963,51 @@ class PrivateSharePlugin extends Plugin {
         async (file) => {
           if (!(file instanceof TFile)) return;
           if (file.extension !== "md") return;
-          await this.handleDeletedNoteAListAssets(
+          await this.queueDeletedNoteAttachments(
             file.path
           );
         }
       )
     );
   }
-  scheduleAListAutoUpload(file) {
+  scheduleAttachmentBackup(file) {
     if(this.isMobileDevice())return;
     if (!(file instanceof TFile) || file.extension !== "md")
       return;
 
-    const oldTimer = this.alistAutoTimers.get(file.path);
+    const oldTimer = this.backupTimers.get(file.path);
     if (oldTimer) {
       window.clearTimeout(oldTimer);
     }
 
     const timer = window.setTimeout(async () => {
-      this.alistAutoTimers.delete(file.path);
-      if (this.settings.alistAutoUpload === false) return;
-      if (this.alistAutoRunning.has(file.path)) {
-        this.scheduleAListAutoUpload(file);
+      this.backupTimers.delete(file.path);
+
+      if (this.backupRunning.has(file.path)) {
+        this.scheduleAttachmentBackup(file);
         return;
       }
 
-      this.alistAutoRunning.add(file.path);
+      this.backupRunning.add(file.path);
       try {
-        await this.uploadCurrentNoteAttachmentsToAList(
+        await this.backupCurrentNote(
           file,
           { automatic: true, silentNoop: true }
         );
       } finally {
-        this.alistAutoRunning.delete(file.path);
+        this.backupRunning.delete(file.path);
       }
     }, 2500);
 
-    this.alistAutoTimers.set(file.path, timer);
+    this.backupTimers.set(file.path, timer);
   }
 
   isMobileDevice() { return Platform?.isMobile===true; }
 
-  desktopAListBase() {return this.privateLanBase(this.settings.alistLanUrl);}
-  privateLanBase(value) {
-    if(this.isMobileDevice())return '';
-    try{
-      const u=new URL(normalizeBase(value));
-      const h=u.hostname.toLowerCase(),parts=h.split('.').map(Number);
-      const ipv4=/^\d+\.\d+\.\d+\.\d+$/.test(h)&&parts.every(n=>n>=0&&n<=255);
-      const privateHost=ipv4&&(parts[0]===10||parts[0]===127||parts[0]===192&&parts[1]===168||parts[0]===172&&parts[1]>=16&&parts[1]<=31);
-      if(!['http:','https:'].includes(u.protocol)||u.username||u.password||u.search||u.hash||u.pathname!=='/'||!(privateHost||h==='localhost'||h==='[::1]'||/^\[f[cd][0-9a-f:]+\]$/.test(h)||/\.(local|lan)$/.test(h)))return '';
-      return u.origin;
-    }catch{return '';}
-  }
-
   async desktopUploadAvailable() {return !this.isMobileDevice()&&!!(this.settings.serverUrl&&this.settings.apiToken);}
 
-  async desktopAListAvailable() {
-    const base=this.desktopAListBase();if(!base)return false;
-    if(this.desktopProbe?.base===base&&Date.now()<this.desktopProbe.until)return this.desktopProbe.ok;
-    const ok=await new Promise(resolve=>{
-      let settled=false,req;
-      const done=value=>{if(settled)return;settled=true;clearTimeout(timer);resolve(value);};
-      const timer=setTimeout(()=>{req?.destroy();done(false);},4000);
-      try{req=require(base.startsWith('https:')?'https':'http').get(base+'/api/public/settings',res=>{
-        let body='';res.on('data',chunk=>{body+=chunk;if(body.length>262144){req.destroy();done(false);}});
-        res.on('error',()=>done(false));res.on('end',()=>{try{done(res.statusCode===200&&JSON.parse(body).code===200);}catch{done(false);}});
-      });req.on('error',()=>done(false));}catch{done(false);}
-    });
-    this.desktopProbe={base,ok,until:Date.now()+15000};return ok;
-  }
-
   scheduleDesktopUploadScan() {
-    if(this.isMobileDevice()||this.settings.alistAutoUpload===false||this.desktopUploadsStopped)return;
+    if(this.isMobileDevice()||this.desktopUploadsStopped)return;
     if(this.desktopScanTimer)window.clearTimeout(this.desktopScanTimer);
     this.desktopScanTimer=window.setTimeout(()=>{this.desktopScanTimer=null;this.scanDesktopAttachments();},4000);
   }
@@ -1375,7 +1018,7 @@ class PrivateSharePlugin extends Plugin {
 
   async scanDesktopAttachments(options={}) {
     if(this.isMobileDevice()){if(options.manual)new Notice('手机不上传附件，请将笔记和附件同步到电脑');return false;}
-    if(this.desktopScanRunning||this.configTransferRunning||this.desktopUploadsStopped||this.settings.alistAutoUpload===false&&!options.manual)return false;
+    if(this.desktopScanRunning||this.configTransferRunning||this.desktopUploadsStopped)return false;
     this.desktopScanRunning=true;
     try{
       if(!await this.desktopUploadAvailable()){if(options.manual)new Notice('分享服务暂不可用，附件继续保留本地，稍后自动重试');return false;}
@@ -1385,7 +1028,7 @@ class PrivateSharePlugin extends Plugin {
         while(queue.length&&!this.desktopUploadsStopped){
           const file=queue.shift();
           if(this.hasLocalAttachmentLinks(await this.app.vault.read(file),file)){
-            const changed=await this.uploadCurrentNoteAttachmentsToAList(file,{automatic:true,silentNoop:true});
+            const changed=await this.backupCurrentNote(file,{automatic:true,silentNoop:true});
             if(changed)uploaded++;
           }
         }
@@ -1417,372 +1060,15 @@ class PrivateSharePlugin extends Plugin {
     }finally{this.uploadedShareRefreshRunning=false;}
   }
 
-  validateAListSettings(showNotice = true) {
-    const lan = normalizeBase(this.settings.alistLanUrl || this.settings.alistPublicUrl);
-    const publicBase = normalizeBase(
-      this.settings.alistPublicUrl
-    );
-    if (!lan) {
-      if (showNotice) {
-      new Notice(
-        "\u8bf7\u5148\u5728 Private Share \u8bbe\u7f6e\u4e2d\u586b\u5199 AList \u5c40\u57df\u7f51\u5730\u5740"
-      );
-      }
-      return null;
-    }
-    if (!publicBase) {
-      if (showNotice) {
-      new Notice(
-        "\u8bf7\u5148\u586b\u5199 AList \u516c\u7f51\u8bbf\u95ee\u5730\u5740"
-      );
-      }
-      return null;
-    }
-    if (
-      !this.settings.alistToken &&
-      !this.settings.alistUsername
-    ) {
-      if (showNotice) {
-      new Notice(
-        "\u8bf7\u586b\u5199 AList Token\uff0c\u6216\u586b\u5199\u7528\u6237\u540d\u548c\u5bc6\u7801"
-      );
-      }
-      return null;
-    }
-    return { lan, publicBase };
-  }
-
-  async getAListToken() {
-    const configured = String(
-      this.settings.alistToken || ""
-    ).trim();
-    if (configured) return configured;
-
-    const lan = normalizeBase(this.settings.alistLanUrl || this.settings.alistPublicUrl);
-    const username = String(
-      this.settings.alistUsername || ""
-    ).trim();
-    const password = String(
-      this.settings.alistPassword || ""
-    );
-    if (!lan || !username) {
-      throw new Error("AList credentials missing");
-    }
-
-    const response = await requestUrl({
-      url: lan + "/api/auth/login",
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        username,
-        password,
-      }),
-      throw: false,
-    });
-
-    let data = {};
-    try {
-      data =
-        response.json ||
-        JSON.parse(response.text || "{}");
-    } catch (_) {}
-
-    const token =
-      data &&
-      data.data &&
-      typeof data.data.token === "string"
-        ? data.data.token
-        : "";
-
-    if (
-      response.status < 200 ||
-      response.status >= 300 ||
-      !token
-    ) {
-      throw new Error(
-        (data && (data.message || data.error)) ||
-          "AList login failed: HTTP " +
-            response.status
-      );
-    }
-    return token;
-  }
-
-  buildAListRemotePath(originalName) {
-    const root = normalizeRemotePath(
-      this.settings.alistRootPath || "/Obsidian"
-    );
-    const parts = [root];
-    if (this.settings.alistUseDateFolders !== false) {
-      const d = new Date();
-      parts.push(String(d.getFullYear()));
-      parts.push(
-        String(d.getMonth() + 1).padStart(2, "0")
-      );
-    }
-    const uniqueName =
-      uploadStamp() +
-      "-" +
-      randomShortId() +
-      "-" +
-      safeRemoteName(originalName);
-    return normalizeRemotePath(
-      parts.join("/") + "/" + uniqueName
-    );
-  }
-
-  buildAListPublicUrl(remotePath, sign = "") {
-    const publicBase = normalizeBase(
-      this.settings.alistPublicUrl
-    );
-    let url =
-      publicBase + "/d" + encodeUrlPath(remotePath);
-    if (sign) {
-      url += "?sign=" + encodeURIComponent(sign);
-    }
-    return url;
-  }
-
-  async getMediaProxyUrl(upstreamUrl, remotePath = "") {
-    const server = this.privateLanBase(this.settings.localUploadUrl)||normalizeBase(this.settings.serverUrl);
-    const token = String(this.settings.apiToken || "").trim();
-    if (!server || !token) return "";
-
-    const response = await requestUrl({
-      url: server + "/api/media-link",
-      method: "POST",
-      headers: {
-        Authorization: "Bearer " + token,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        url: upstreamUrl,
-        remotePath,
-      }),
-      throw: false,
-    });
-
-    let data = {};
-    try {
-      data =
-        response.json ||
-        JSON.parse(response.text || "{}");
-    } catch (_) {}
-
-    if (
-      response.status < 200 ||
-      response.status >= 300 ||
-      !data ||
-      typeof data.url !== "string" ||
-      !data.url
-    ) {
-      throw new Error(
-        (data && (data.error || data.message)) ||
-          "Private Share media proxy link failed"
-      );
-    }
-    const parsed = new URL(data.url);
-    if (parsed.protocol !== "https:" || !/^\/m\/[A-Za-z0-9_-]{16}$/.test(parsed.pathname) || parsed.search) {
-      throw new Error("服务端未返回稳定短链，已保留本地附件。请检查媒体服务配置。");
-    }
-    return data.url;
-  }
-  async getAListFileSign(
-    remotePath,
-    token,
-    maxAttempts = 8
-  ) {
-    const lan = normalizeBase(this.settings.alistLanUrl || this.settings.alistPublicUrl);
-    const normalized = normalizeRemotePath(remotePath);
-    const slash = normalized.lastIndexOf("/");
-    const parentPath =
-      slash > 0 ? normalized.slice(0, slash) : "/";
-    const fileName = normalized.slice(slash + 1);
-    let lastError = null;
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        const response = await requestUrl({
-          url: lan + "/api/fs/get",
-          method: "POST",
-          headers: {
-            Authorization: token,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            path: normalized,
-            password: "",
-          }),
-          throw: false,
-        });
-
-        let data = {};
-        try {
-          data =
-            response.json ||
-            JSON.parse(response.text || "{}");
-        } catch (_) {}
-
-        const sign =
-          data &&
-          data.data &&
-          typeof data.data.sign === "string"
-            ? data.data.sign
-            : "";
-
-        if (
-          response.status >= 200 &&
-          response.status < 300 &&
-          (!data.code || data.code === 200) &&
-          sign
-        ) {
-          return sign;
-        }
-
-        lastError = new Error(
-          (data && (data.message || data.error)) ||
-            "AList file info not ready"
-        );
-      } catch (error) {
-        lastError = error;
-      }
-
-      try {
-        const listResponse = await requestUrl({
-          url: lan + "/api/fs/list",
-          method: "POST",
-          headers: {
-            Authorization: token,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            path: parentPath,
-            password: "",
-            page: 1,
-            per_page: 200,
-            refresh: true,
-          }),
-          throw: false,
-        });
-
-        let listData = {};
-        try {
-          listData =
-            listResponse.json ||
-            JSON.parse(listResponse.text || "{}");
-        } catch (_) {}
-
-        const content =
-          listData &&
-          listData.data &&
-          Array.isArray(listData.data.content)
-            ? listData.data.content
-            : [];
-
-        const item = content.find(
-          (entry) =>
-            entry &&
-            entry.name === fileName &&
-            typeof entry.sign === "string" &&
-            entry.sign
-        );
-
-        if (item) {
-          return item.sign;
-        }
-
-        if (
-          listResponse.status < 200 ||
-          listResponse.status >= 300 ||
-          (listData.code && listData.code !== 200)
-        ) {
-          lastError = new Error(
-            (listData &&
-              (listData.message || listData.error)) ||
-              "AList directory refresh failed"
-          );
-        }
-      } catch (error) {
-        lastError = error;
-      }
-
-      if (attempt < maxAttempts) {
-        await new Promise((resolve) =>
-          window.setTimeout(
-            resolve,
-            Math.min(500 * attempt, 2500)
-          )
-        );
-      }
-    }
-
-    throw (
-      lastError ||
-      new Error("AList file sign unavailable")
-    );
-  }
-  async uploadCurrentNoteAttachmentsToAList(file, runOptions = {}) {
+  async backupCurrentNote(file, runOptions = {}) {
     if(this.isMobileDevice()){if(!runOptions.automatic&&!runOptions.silentNoop)new Notice('手机不上传附件，请同步到电脑后上传');return false;}
     if (this.configTransferRunning) return false;
-    this.alistUploadJobs ||= new Map();
-    if (this.alistUploadJobs.has(file.path)) return this.alistUploadJobs.get(file.path);
-    const job = this.performAListUpload(file, runOptions);
-    this.alistUploadJobs.set(file.path, job);
-    try { return await job; } finally { this.alistUploadJobs.delete(file.path); }
+    this.backupJobs ||= new Map();
+    if (this.backupJobs.has(file.path)) return this.backupJobs.get(file.path);
+    const job = this.backupNoteAttachments(file, runOptions);
+    this.backupJobs.set(file.path, job);
+    try { return await job; } finally { this.backupJobs.delete(file.path); }
   }
-
-  async ensureAListDirectory(remotePath, token) {
-    const lan = this.desktopAListBase();
-    const normalized = normalizeRemotePath(remotePath);
-    const parts = normalized.split("/").filter(Boolean);
-    if (parts.length <= 1) return;
-
-    // The first segment is normally the AList mount itself
-    // (for example /Obsidian), so only create folders below it.
-    let current = "/" + parts[0];
-    for (let i = 1; i < parts.length; i++) {
-      current += "/" + parts[i];
-      const response = await requestUrl({
-        url: lan + "/api/fs/mkdir",
-        method: "POST",
-        headers: {
-          Authorization: token,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ path: current }),
-        throw: false,
-      });
-
-      let data = {};
-      try {
-        data =
-          response.json ||
-          JSON.parse(response.text || "{}");
-      } catch (_) {}
-
-      const message = String(
-        (data && (data.message || data.error)) || ""
-      );
-      const alreadyExists =
-        /exist|already|存在/i.test(message);
-      const ok =
-        (response.status >= 200 &&
-          response.status < 300 &&
-          (!data.code || data.code === 200)) ||
-        alreadyExists;
-
-      if (!ok) {
-        throw new Error(
-          message ||
-            "AList mkdir failed: HTTP " +
-              response.status
-        );
-      }
-    }
-  }
-
 
   async directRequest(base, route, ticket, method = 'POST', body, partNumber) {
     for(let attempt=0;attempt<4;attempt++){
@@ -1826,16 +1112,16 @@ class PrivateSharePlugin extends Plugin {
     const adapter=this.app.vault.adapter;
     const fullPath=typeof adapter.getFullPath==='function'?adapter.getFullPath(target.path):null;
     if(!fullPath&&size>128*1024**2)throw new Error('手机暂支持最多 128 MiB；更大的附件请从电脑分片上传');
-    const previous=Object.values(this.settings.alistAssets||{}).flat().find(a=>a.uploadIdentity===identity&&!a.pendingDelete);
+    const previous=Object.values(this.settings.attachmentAssets||{}).flat().find(a=>a.uploadIdentity===identity&&!a.pendingDelete);
     if(previous){
       const r=await requestUrl({url:previous.publicUrl,method:'HEAD',throw:false});
       if(r.status===200&&Number(r.headers['content-length'])===size)return {...previous,uploadIdentity:identity};
       if(r.status!==404)throw new Error('无法核实已有附件，已保留本地链接');
     }
-    this.settings.pendingAListUploads ||= {};
+    this.settings.pendingUploads ||= {};
     const uploadKey='vps:'+identity;
-    let pending=this.settings.pendingAListUploads[uploadKey];
-    if(!pending){const bytes=require('crypto').randomBytes(16);pending={backend:'vps',requestId:[...bytes].map(n=>n.toString(16).padStart(2,'0')).join(''),parts:[]};this.settings.pendingAListUploads[uploadKey]=pending;await this.saveData(this.settings);}
+    let pending=this.settings.pendingUploads[uploadKey];
+    if(!pending){const bytes=require('crypto').randomBytes(16);pending={backend:'vps',requestId:[...bytes].map(n=>n.toString(16).padStart(2,'0')).join(''),parts:[]};this.settings.pendingUploads[uploadKey]=pending;await this.saveData(this.settings);}
     if(!pending.ticket||pending.expiresAt<Date.now()+60000){
       const fresh=await this.api('/api/media/upload-ticket','POST',{requestId:pending.requestId,name:target.name,size});
       const u=new URL(fresh.base);
@@ -1868,7 +1154,7 @@ class PrivateSharePlugin extends Plugin {
           }
         }finally{await handle?.close();}
         const current=await adapter.stat(target.path);
-        if(!current||current.size!==size||current.mtime!==mtime){await this.directRequest(pending.base,'/upload/abort',pending.session).catch(()=>{});delete this.settings.pendingAListUploads[uploadKey];await this.saveData(this.settings);throw new Error('上传期间附件发生变化，已保留本地链接，请重试');}
+        if(!current||current.size!==size||current.mtime!==mtime){await this.directRequest(pending.base,'/upload/abort',pending.session).catch(()=>{});delete this.settings.pendingUploads[uploadKey];await this.saveData(this.settings);throw new Error('上传期间附件发生变化，已保留本地链接，请重试');}
         done=await this.directRequest(pending.base,'/upload/complete',pending.session,'POST',{parts:pending.parts});
       }
     }
@@ -1892,7 +1178,7 @@ class PrivateSharePlugin extends Plugin {
       const text=await this.app.vault.read(file);
       for(const url of text.match(/https?:\/\/[^\s<>"')]+/g)||[])urls.add(url.replaceAll('&amp;','&'));
       const local=this.localAttachmentTargets(text,file);
-      for(const asset of Object.values(this.settings.alistAssets||{}).flat())if(asset.publicUrl&&local.has(asset.originalLocalPath))urls.add(asset.publicUrl);
+      for(const asset of Object.values(this.settings.attachmentAssets||{}).flat())if(asset.publicUrl&&local.has(asset.originalLocalPath))urls.add(asset.publicUrl);
     }
     return [...urls];
   }
@@ -1907,10 +1193,10 @@ class PrivateSharePlugin extends Plugin {
 
   localBackupFor(target,notePath) {
     const identity=target.path+':'+target.stat.mtime+':'+target.stat.size;
-    return [...(this.settings.alistAssets?.[notePath]||[]),...Object.values(this.settings.alistAssets||{}).flat()].find(a=>a.originalLocalPath===target.path&&a.publicUrl&&(a.uploadIdentity===identity||a.localSize===target.stat.size&&Math.abs(a.localMtime-target.stat.mtime)<1));
+    return [...(this.settings.attachmentAssets?.[notePath]||[]),...Object.values(this.settings.attachmentAssets||{}).flat()].find(a=>a.originalLocalPath===target.path&&a.publicUrl&&(a.uploadIdentity===identity||a.localSize===target.stat.size&&Math.abs(a.localMtime-target.stat.mtime)<1));
   }
 
-  async performAListUpload(file,runOptions={}) {
+  async backupNoteAttachments(file,runOptions={}) {
     if(this.isMobileDevice())return false;
     try {
       const text=await this.app.vault.read(file),targets=this.localAttachmentTargets(text,file),uploaded=new Map();
@@ -1921,14 +1207,14 @@ class PrivateSharePlugin extends Plugin {
         const asset=await this.uploadFileToVPS(target);
         // The note may have changed while bytes were uploading. Do not claim a removed reference.
         if(!this.localAttachmentTargets(await this.app.vault.read(file),file).has(localPath)||target.stat.size!==localSize||target.stat.mtime!==localMtime){
-          this.recordAListAssetsForNote(file.path,new Map([[localPath,{...asset,localSize,localMtime}]]));
-          const orphan=this.settings.alistAssets[file.path].find(a=>a.remotePath===asset.remotePath);orphan.pendingDelete=true;orphan.deleteReason='link';
+          this.recordAttachmentAssets(file.path,new Map([[localPath,{...asset,localSize,localMtime}]]));
+          const orphan=this.settings.attachmentAssets[file.path].find(a=>a.remotePath===asset.remotePath);orphan.pendingDelete=true;orphan.deleteReason='link';
           await this.saveData(this.settings);continue;
         }
         uploaded.set(localPath,{...asset,localSize,localMtime});
       }
       if(!uploaded.size)return false;
-      this.recordAListAssetsForNote(file.path,uploaded);
+      this.recordAttachmentAssets(file.path,uploaded);
       this.settings.pendingUploadedShareRefresh ||= {};this.settings.pendingUploadedShareRefresh[file.path]=true;
       await this.saveData(this.settings);
       if(runOptions.automatic)await this.retryUploadedShareRefresh();
@@ -1936,14 +1222,14 @@ class PrivateSharePlugin extends Plugin {
     }catch(error){console.error('Attachment backup failed',error);new Notice('附件备份失败，本地文件保留：'+error.message,9000);return false;}
   }
 
-  recordAListAssetsForNote(notePath, uploadedMap) {
-    if (!this.settings.alistAssets) {
-      this.settings.alistAssets = {};
+  recordAttachmentAssets(notePath, uploadedMap) {
+    if (!this.settings.attachmentAssets) {
+      this.settings.attachmentAssets = {};
     }
     const current = Array.isArray(
-      this.settings.alistAssets[notePath]
+      this.settings.attachmentAssets[notePath]
     )
-      ? this.settings.alistAssets[notePath]
+      ? this.settings.attachmentAssets[notePath]
       : [];
     const byRemotePath = new Map(
       current
@@ -1961,10 +1247,10 @@ class PrivateSharePlugin extends Plugin {
         typeof uploaded.remotePath !== "string"
       )
         continue;
-      if (uploaded.uploadKey) delete this.settings.pendingAListUploads?.[uploaded.uploadKey];
-      if (uploaded.legacyUploadKey) delete this.settings.pendingAListUploads?.[uploaded.legacyUploadKey];
+      if (uploaded.uploadKey) delete this.settings.pendingUploads?.[uploaded.uploadKey];
+      if (uploaded.legacyUploadKey) delete this.settings.pendingUploads?.[uploaded.legacyUploadKey];
       byRemotePath.set(uploaded.remotePath, {
-        backend: uploaded.backend || "alist",
+        backend: "vps",
         uploadIdentity: uploaded.uploadIdentity || "",
         remotePath: uploaded.remotePath,
         publicUrl: uploaded.publicUrl || "",
@@ -1976,47 +1262,40 @@ class PrivateSharePlugin extends Plugin {
       });
     }
 
-    this.settings.alistAssets[notePath] =
+    this.settings.attachmentAssets[notePath] =
       [...byRemotePath.values()];
   }
 
-  scheduleAListReferenceCleanup(file) {
+  scheduleReferenceCheck(file) {
     if (!(file instanceof TFile) || file.extension !== "md")
       return;
-    if (
-      this.settings.alistDeleteRemoteOnLinkRemove ===
-      false
-    ) {
-      return;
-    }
 
     const oldTimer =
-      this.alistReferenceCleanupTimers.get(file.path);
+      this.referenceTimers.get(file.path);
     if (oldTimer) window.clearTimeout(oldTimer);
 
     const timer = window.setTimeout(async () => {
-      this.alistReferenceCleanupTimers.delete(file.path);
+      this.referenceTimers.delete(file.path);
       try {
-        await this.cleanupRemovedAListAssetLinks(file);
+        await this.markRemovedAttachmentReferences(file);
       } catch (error) {
         console.error(
-          "AList orphan attachment cleanup failed",
+          "Attachment reference check failed",
           error
         );
       }
     }, 5000);
 
-    this.alistReferenceCleanupTimers.set(
+    this.referenceTimers.set(
       file.path,
       timer
     );
   }
 
-  async cleanupRemovedAListAssetLinks(file) {
+  async markRemovedAttachmentReferences(file) {
     if (this.configTransferRunning) return false;
-    if (this.settings.alistDeleteRemoteOnLinkRemove === false) return;
-    if (this.alistAutoRunning?.has(file.path) || this.alistUploadJobs?.has(file.path)) return;
-    const assets = this.settings.alistAssets?.[file.path] || [];
+    if (this.backupRunning?.has(file.path) || this.backupJobs?.has(file.path)) return;
+    const assets = this.settings.attachmentAssets?.[file.path] || [];
     if (!assets.length) return;
     const text = (await this.app.vault.read(file)).replaceAll("&amp;", "&");
     for (const asset of assets) {
@@ -2027,108 +1306,68 @@ class PrivateSharePlugin extends Plugin {
       }
     }
     await this.saveData(this.settings);
-    await this.retryAListCleanup();
+    await this.retryAttachmentCleanup();
   }
 
-  async verifyAListReferences() {
+  async verifyAttachmentReferences() {
     const urls=new Set(await this.collectVaultMediaUrls());
     const data = await this.api("/api/media/references", "POST", {urls:[...urls]});
     if (!Array.isArray(data.remotePaths) || data.unresolved !== false) throw new Error("存在未能核实的附件引用，已保留远程文件");
     return new Set(data.remotePaths.map(normalizeRemotePath));
   }
 
-  async retryAListCleanup() {
+  async openAttachmentCleanup() {
+    if(this.isMobileDevice()){new Notice("请在电脑上管理 VPS 副本");return;}
+    if(this.backupJobs?.size||this.backupRunning?.size||this.desktopScanRunning||this.attachmentCleanupRunning){new Notice("附件任务正在进行，请稍后重试");return;}
+    try{
+    const referenced=new Set(await this.collectVaultMediaUrls()),candidates=[];
+    for(const [notePath,assets]of Object.entries(this.settings.attachmentAssets||{}))for(const asset of assets)if(asset.remotePath&&asset.publicUrl&&!referenced.has(asset.publicUrl))candidates.push({notePath,asset});
+    if(!candidates.length){new Notice("没有可清理的附件");return;}
+    new AttachmentCleanupModal(this.app,this,candidates).open();
+    }catch(e){new Notice("附件检查失败，VPS 副本保留："+e.message);}
+  }
+
+  async retryAttachmentCleanup(options={}) {
+    if(!options.manual)return false;
     if(this.isMobileDevice())return false;
     if (this.configTransferRunning) return false;
-    if (this.alistCleanupRunning) return;
-    this.alistCleanupRunning = true;
+    if (this.attachmentCleanupRunning) return;
+    this.attachmentCleanupRunning = true;
     try {
-      const entries = Object.entries(this.settings.alistAssets || {});
+      const entries = Object.entries(this.settings.attachmentAssets || {});
       for (const [notePath, assets] of entries) {
         if (!Array.isArray(assets)) continue;
         for (const asset of [...assets]) {
           if (!asset.pendingDelete || !asset.remotePath) continue;
-          if (asset.deleteReason === "note" && this.settings.alistDeleteRemoteOnNoteDelete === false) continue;
-          if (asset.deleteReason === "link" && this.settings.alistDeleteRemoteOnLinkRemove === false) continue;
-          if (this.alistAutoRunning?.size || this.alistUploadJobs?.size) continue;
+          if (this.backupRunning?.size || this.backupJobs?.size) continue;
           try {
             // Re-read all notes immediately before each delete. Unavailable checks fail closed.
-            const references = await this.verifyAListReferences();
+            const references = await this.verifyAttachmentReferences();
             if (references.has(normalizeRemotePath(asset.remotePath))) {
               asset.cleanupStatus = "referenced"; continue;
             }
             // Unknown historical ownership records protect the object as well.
             const uncertain = entries.some(([owner, list]) => owner !== notePath && Array.isArray(list) && list.some(x => x.remotePath === asset.remotePath && !x.pendingDelete));
             if (uncertain) {asset.cleanupStatus = "tracked-elsewhere";continue;}
-            if(asset.backend==='worker'||asset.backend==='vps')await this.api('/api/media/direct-delete','POST',{remotePath:asset.remotePath,urls:await this.collectVaultMediaUrls()});
-            else {const token = await this.getAListToken();await this.deleteAListRemoteAsset(asset.remotePath, token);}
+            const removed=await this.api('/api/media/direct-delete','POST',{remotePath:asset.remotePath,urls:await this.collectVaultMediaUrls()});
+            if(removed.ok!==true)throw new Error('远程删除未确认，记录保留');
             const index = assets.indexOf(asset); if (index >= 0) assets.splice(index, 1);
           } catch (_) {
             asset.cleanupStatus = "retry";
             asset.lastAttempt = new Date().toISOString();
           }
         }
-        if (!assets.length) delete this.settings.alistAssets[notePath];
+        if (!assets.length) delete this.settings.attachmentAssets[notePath];
       }
       await this.saveData(this.settings);
-    } finally { this.alistCleanupRunning = false; }
+    } finally { this.attachmentCleanupRunning = false; }
   }
 
-  async deleteAListRemoteAsset(remotePath, token) {
-    const lan = normalizeBase(this.settings.alistLanUrl || this.settings.alistPublicUrl);
-    const normalized = normalizeRemotePath(remotePath);
-    const slash = normalized.lastIndexOf('/');
-    const dir = slash > 0 ? normalized.slice(0, slash) : '/';
-    const name = normalized.slice(slash + 1);
-    if (!name) throw new Error('invalid remote asset path');
-    const containsFile = async () => {
-      const r = await requestUrl({url:lan+'/api/fs/list',method:'POST',headers:{Authorization:token,'Content-Type':'application/json'},body:JSON.stringify({path:dir,password:'',page:1,per_page:1000,refresh:true}),throw:false});
-      let data;try{data=r.json||JSON.parse(r.text||'{}');}catch{throw new Error('Remote deletion could not be verified');}
-      if(r.status<200||r.status>=300||data.code!==200||!data.data)throw new Error('Remote deletion could not be verified');
-      const content=data.data.content;
-      if(!Array.isArray(content)&&data.data.total!==0)throw new Error('Remote deletion listing is incomplete');
-      // Always inspect every page; a missing item on the first page is not proof of deletion.
-      const items=Array.isArray(content)?content:[];
-      if(items.some(item=>item.name===name))return true;
-      const total=Number(data.data.total);
-      if(!Number.isFinite(total)||total<0||total>items.length)throw new Error('Remote deletion listing is incomplete');
-      return false;
-    };
-    // A stale directory cache can make the storage API report a false success.
-    if(!await containsFile())return;
-    const r=await requestUrl({url:lan+'/api/fs/remove',method:'POST',headers:{Authorization:token,'Content-Type':'application/json'},body:JSON.stringify({dir,names:[name]}),throw:false});
-    let data;try{data=r.json||JSON.parse(r.text||'{}');}catch{throw new Error('Remote deletion failed');}
-    if(r.status<200||r.status>=300||data.code!==200)throw new Error('Remote deletion failed');
-    if(await containsFile())throw new Error('Remote file still exists; keep deletion record for retry');
-  }
-
-  async confirmRemoteCleanup(notePath) {
-    return new Promise((resolve) => {
-      const modal = new Modal(this.app);
-      let finished = false;
-      const done = (answer) => { if (finished) return; finished = true; resolve(answer); modal.close(); };
-      modal.onOpen = () => {
-        modal.contentEl.createEl("h3", {text:"清理已删除笔记的远程附件？"});
-        modal.contentEl.createEl("p", {text:notePath});
-        modal.contentEl.createEl("p", {text:"只清理插件上传且没有其他引用的文件。核实失败的文件将保留。"});
-        const buttons = modal.contentEl.createDiv();
-        buttons.createEl("button", {text:"保留"}).onclick = () => done(false);
-        buttons.createEl("button", {text:"检查并清理", cls:"mod-warning"}).onclick = () => done(true);
-      };
-      modal.onClose = () => {if (!finished) {finished = true; resolve(false);}};
-      modal.open();
-    });
-  }
-
-  async handleDeletedNoteAListAssets(notePath) {
-    if (this.settings.alistDeleteRemoteOnNoteDelete === false) return;
-    const assets = this.settings.alistAssets?.[notePath] || [];
-    if (!assets.length) return;
-    if (this.settings.alistConfirmRemoteDelete !== false && !await this.confirmRemoteCleanup(notePath)) return;
-    for (const asset of assets) {asset.pendingDelete = true;asset.deleteReason = "note";}
+  async queueDeletedNoteAttachments(notePath) {
+    for(const asset of this.settings.attachmentAssets?.[notePath]||[]){asset.pendingDelete=true;asset.deleteReason="note";}
     await this.saveData(this.settings);
-    await this.retryAListCleanup();
   }
+
   validateSettings() {
     const server = normalizeBase(
       this.settings.serverUrl
@@ -2191,16 +1430,16 @@ class PrivateSharePlugin extends Plugin {
   }
 
   async preparePayload(file, options, existing, runOptions={}) {
-    if(!runOptions.skipUpload&&this.settings.alistAutoUpload!==false)await this.uploadCurrentNoteAttachmentsToAList(file,{silentNoop:true});
+    if(!runOptions.skipUpload)await this.backupCurrentNote(file,{silentNoop:true});
     let markdown=await this.app.vault.read(file);
     const local=await this.localImagesForShare(markdown,file);
     const attachments=[...local.images.values()],uploads=[];
     const labelText=value=>String(value).replace(/[\[\]<>]/g,'');
     const placeholder=(target,label)=>{
       const backup=this.localBackupFor(target,file.path);
-      if(backup)return aListReplacement(target.name,label||target.name,backup.publicUrl,true);
+      if(backup)return attachmentMarkup(target.name,label||target.name,backup.publicUrl,true);
       const image=local.images.get(target.path);
-      if(image)return aListReplacement(target.name,label||target.name,'{{ASSET_BASE}}/'+image.key,true);
+      if(image)return attachmentMarkup(target.name,label||target.name,'{{ASSET_BASE}}/'+image.key,true);
       return '**'+labelText(label||target.name)+'（附件仅保存在本地，等待电脑上传）**';
     };
     markdown=markdown.replace(/!\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g,(match,raw,alias)=>{
@@ -2219,7 +1458,7 @@ class PrivateSharePlugin extends Plugin {
       return backup?match.replace(quote+raw+quote,quote+htmlAttr(backup.publicUrl)+quote):image?match.replace(quote+raw+quote,quote+'{{ASSET_BASE}}/'+image.key+quote):match;
     });
     markdown=markdown.replace(/<(?:audio|video|source)\b[^>]*\bsrc\s*=\s*(["'])([^"']+)\1[^>]*>/gi,(match,quote,raw)=>{let link=raw.trim().replace(/^<|>$/g,'').split('#')[0];try{link=decodeURIComponent(link);}catch{}const target=this.app.metadataCache.getFirstLinkpathDest(link,file.path),backup=target instanceof TFile&&this.localBackupFor(target,file.path);return backup?match.replace(quote+raw+quote,quote+htmlAttr(backup.publicUrl)+quote):match;});
-    markdown=markdown.replace(/\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g,(_m,raw,alias)=>{const target=this.app.metadataCache.getFirstLinkpathDest(raw.trim(),file.path),backup=target instanceof TFile&&this.localBackupFor(target,file.path);return backup?aListReplacement(target.name,alias||target.name,backup.publicUrl,false):alias||raw;});
+    markdown=markdown.replace(/\[\[([^\]|#]+)(?:#[^\]|]+)?(?:\|([^\]]+))?\]\]/g,(_m,raw,alias)=>{const target=this.app.metadataCache.getFirstLinkpathDest(raw.trim(),file.path),backup=target instanceof TFile&&this.localBackupFor(target,file.path);return backup?attachmentMarkup(target.name,alias||target.name,backup.publicUrl,false):alias||raw;});
 
     const payloadOptions = {
       passwordProtected: !!(
@@ -2284,14 +1523,12 @@ class PrivateSharePlugin extends Plugin {
     }
 
     const request = base => requestUrl({url:base+apiPath,method,headers,body:body?JSON.stringify(body):undefined,throw:false});
-    const lan=apiPath.startsWith('/api/media/')?this.privateLanBase(this.settings.localUploadUrl):'';
     let response;
-    if(lan){
-      let timer;
-      try{response=await Promise.race([request(lan),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Local media API unavailable')),4000);})]);}
-      catch{response=await request(server);}
-      finally{clearTimeout(timer);}
-    }else response=await request(server);
+    const attempts=method==='GET'||apiPath.startsWith('/api/media/')?3:1;
+    for(let attempt=0;attempt<attempts;attempt++){
+      try{response=await request(server);break;}
+      catch(error){if(attempt===attempts-1)throw error;await new Promise(resolve=>setTimeout(resolve,300*(attempt+1)));}
+    }
 
     let data = {};
     try {
@@ -2658,46 +1895,6 @@ class PrivateSharePlugin extends Plugin {
     });
   }
 
-  async createInvite(
-    share,
-    label,
-    company
-  ) {
-    const data = await this.api(
-      "/api/share/" +
-        encodeURIComponent(share.shareId) +
-        "/invites",
-      "POST",
-      { label, company },
-      share.editToken
-    );
-    return data.invite;
-  }
-
-  async listInvites(share) {
-    const data = await this.api(
-      "/api/share/" +
-        encodeURIComponent(share.shareId) +
-        "/invites",
-      "GET",
-      null,
-      share.editToken
-    );
-    return data.invites || [];
-  }
-
-  async revokeInvite(share, inviteId) {
-    return this.api(
-      "/api/share/" +
-        encodeURIComponent(share.shareId) +
-        "/invites/" +
-        encodeURIComponent(inviteId),
-      "DELETE",
-      null,
-      share.editToken
-    );
-  }
-
   async getDiscussion(share) {
     return this.api(
       "/api/share/" +
@@ -2747,259 +1944,21 @@ class PrivateSharePlugin extends Plugin {
 }
 
 class PrivateShareSettingTab extends PluginSettingTab {
-  constructor(app, plugin) {
-    super(app, plugin);
-    this.plugin = plugin;
-  }
-
-  display() {
-    const c = this.containerEl;
-    c.empty();
-    new Setting(c).setName("配置导入 / 导出").setDesc("用加密文件配置新设备，保留本机分享和附件记录。").addButton(b=>b.setButtonText("导出配置").onClick(()=>new ConfigTransferModal(this.app,this.plugin,"export").open())).addButton(b=>b.setButtonText("导入配置").onClick(()=>new ConfigTransferModal(this.app,this.plugin,"import").open()));
-    new Setting(c).setName("撤销上次配置导入").setDesc("使用上次导入密码恢复原连接配置。").addButton(b=>b.setButtonText("恢复原配置").onClick(()=>new ConfigTransferModal(this.app,this.plugin,"restore").open()));
-
-    new Setting(c)
-      .setName("\u5206\u4eab\u670d\u52a1\u5668")
-      .setDesc(
-        "\u4f8b\u5982 https://share.example.com"
-      )
-      .addText((text) =>
-        text
-          .setPlaceholder(
-            "https://share.example.com"
-          )
-          .setValue(
-            this.plugin.settings.serverUrl ||
-              ""
-          )
-          .onChange(async (value) => {
-            this.plugin.settings.serverUrl =
-              value.trim();
-            await this.plugin.saveData(
-              this.plugin.settings
-            );
-          })
-      );
-
-    new Setting(c)
-      .setName("API Token")
-      .setDesc(
-        "\u7528\u4e8e\u53d1\u5e03\u3001\u66f4\u65b0\u3001\u5ba2\u6237\u94fe\u63a5\u548c\u8ba8\u8bba\u7ba1\u7406\uff1b\u4e0d\u4f1a\u51fa\u73b0\u5728\u516c\u5f00\u94fe\u63a5\u4e2d"
-      )
-      .addText((text) => {
-        text.inputEl.type = "password";
-        text
-          .setPlaceholder(
-            "\u7c98\u8d34\u670d\u52a1\u7aef API Token"
-          )
-          .setValue(
-            this.plugin.settings.apiToken ||
-              ""
-          )
-          .onChange(async (value) => {
-            this.plugin.settings.apiToken =
-              value.trim();
-            await this.plugin.saveData(
-              this.plugin.settings
-            );
-          });
-      });
-
-    c.createEl("h3", {
-      text: '图片本地保存与附件上传',
-    });
-
-    new Setting(c).setName('图片保存方式').setDesc('图片始终保留在 Vault，本地直接显示；发布或更新分享时复制到分享服务器磁盘，供网页显示。不经过 AList/R2，不改写 Vault 图片链接。');
-    new Setting(c).setName('附件上传方式').setDesc(this.plugin.isMobileDevice()?'手机仅同步本地附件，不上传；同步到电脑后由电脑直传 VPS。':'图片、视频、音频和文档保留本地显示，由电脑直传 VPS 保存副本；分享时使用 VPS 链接。启动、同步完成及每 5 分钟检查未备份附件，支持分片、进度与重试，无需 AList。');
-    new Setting(c).setName('局域网分享服务（可选）').setDesc('电脑在家生成附件短链时优先使用；不是附件上传地址。留空使用公网分享服务。').addText(text=>text.setPlaceholder('http://192.168.x.x:8090').setValue(this.plugin.settings.localUploadUrl||'').onChange(async value=>{this.plugin.settings.localUploadUrl=value.trim();await this.plugin.saveData(this.plugin.settings);}));
-    new Setting(c).setName('检查待上传附件').setDesc('只上传笔记引用的视频、音频和文档；图片保持本地链接。').addButton(b=>b.setButtonText('立即检查').onClick(()=>this.plugin.scanDesktopAttachments({manual:true})));
-
-    c.createEl('h3',{text:'旧附件清理设置（可选，新上传不使用）'});
-    new Setting(c)
-      .setName('AList 局域网地址')
-      .setDesc(
-        "仅用于清理以前通过 AList 上传的附件。新附件直传 VPS，无需填写或连接 AList。"
-      )
-      .addText((text) =>
-        text
-          .setPlaceholder("http://192.168.x.x:5244")
-          .setValue(
-            this.plugin.settings.alistLanUrl || ""
-          )
-          .onChange(async (value) => {
-            this.plugin.settings.alistLanUrl =
-              value.trim();
-            await this.plugin.saveData(
-              this.plugin.settings
-            );
-          })
-      );
-
-    new Setting(c)
-      .setName("AList \u516c\u7f51\u8bbf\u95ee\u5730\u5740")
-      .setDesc(
-        '附件管理地址；对外预览继续使用媒体服务的稳定短链'
-      )
-      .addText((text) =>
-        text
-          .setPlaceholder("https://files.example.com")
-          .setValue(
-            this.plugin.settings.alistPublicUrl || ""
-          )
-          .onChange(async (value) => {
-            this.plugin.settings.alistPublicUrl =
-              value.trim();
-            await this.plugin.saveData(
-              this.plugin.settings
-            );
-          })
-      );
-
-    new Setting(c)
-      .setName("AList Token")
-      .setDesc(
-        "\u63a8\u8350\u3002\u5982\u679c\u586b\u5199 Token\uff0c\u5219\u4e0d\u4f7f\u7528\u4e0b\u9762\u7684\u7528\u6237\u540d\u548c\u5bc6\u7801\u767b\u5f55"
-      )
-      .addText((text) => {
-        text.inputEl.type = "password";
-        text
-          .setPlaceholder("AList token")
-          .setValue(
-            this.plugin.settings.alistToken || ""
-          )
-          .onChange(async (value) => {
-            this.plugin.settings.alistToken =
-              value.trim();
-            await this.plugin.saveData(
-              this.plugin.settings
-            );
-          });
-      });
-
-    new Setting(c)
-      .setName("AList \u7528\u6237\u540d")
-      .setDesc(
-        "\u4ec5\u5728\u672a\u586b\u5199 Token \u65f6\u4f7f\u7528"
-      )
-      .addText((text) =>
-        text
-          .setValue(
-            this.plugin.settings.alistUsername || ""
-          )
-          .onChange(async (value) => {
-            this.plugin.settings.alistUsername =
-              value.trim();
-            await this.plugin.saveData(
-              this.plugin.settings
-            );
-          })
-      );
-
-    new Setting(c)
-      .setName("AList \u5bc6\u7801")
-      .setDesc(
-        "\u4ec5\u5728\u672a\u586b\u5199 Token \u65f6\u4f7f\u7528"
-      )
-      .addText((text) => {
-        text.inputEl.type = "password";
-        text
-          .setValue(
-            this.plugin.settings.alistPassword || ""
-          )
-          .onChange(async (value) => {
-            this.plugin.settings.alistPassword =
-              value;
-            await this.plugin.saveData(
-              this.plugin.settings
-            );
-          });
-      });
-
-    new Setting(c)
-      .setName('附件自动上传')
-      .setDesc(
-        "\u5f00\u542f\u540e\uff0c\u62d6\u5165\u6216\u7c98\u8d34\u672c\u5730\u9644\u4ef6\u5230\u7b14\u8bb0\u65f6\uff0c仅电脑通过内网 AList 上传已同步的本地附件到 R2 \u5e76\u66ff\u6362\u4e3a\u516c\u7f51\u94fe\u63a5"
-      )
-      .addToggle((toggle) =>
-        toggle
-          .setValue(
-            this.plugin.settings.alistAutoUpload !== false
-          )
-          .onChange(async (value) => {
-            this.plugin.settings.alistAutoUpload = value;
-            if(value)this.plugin.scheduleDesktopUploadScan();
-            await this.plugin.saveData(
-              this.plugin.settings
-            );
-          })
-      );
-
-    new Setting(c)
-      .setName("\u5220\u9664\u7b14\u8bb0\u65f6\u540c\u6b65\u5220\u9664 AList / R2 \u9644\u4ef6")
-      .setDesc(
-        "\u53ea\u5220\u9664\u7531\u672c\u63d2\u4ef6\u4e0a\u4f20\u5e76\u4e0e\u8be5\u7b14\u8bb0\u7ed1\u5b9a\u8bb0\u5f55\u7684\u8fdc\u7a0b\u9644\u4ef6"
-      )
-      .addToggle((toggle) =>
-        toggle
-          .setValue(
-            this.plugin.settings
-              .alistDeleteRemoteOnNoteDelete !== false
-          )
-          .onChange(async (value) => {
-            this.plugin.settings
-              .alistDeleteRemoteOnNoteDelete = value;
-            await this.plugin.saveData(
-              this.plugin.settings
-            );
-          })
-      );
-
-    new Setting(c)
-      .setName("\u5220\u9664\u8fdc\u7a0b\u9644\u4ef6\u524d\u786e\u8ba4")
-      .setDesc(
-        "\u5efa\u8bae\u4fdd\u6301\u5f00\u542f\uff1b\u5220\u9664\u7b14\u8bb0\u540e\u4f1a\u518d\u8be2\u95ee\u662f\u5426\u5220\u9664 AList / R2 \u9644\u4ef6"
-      )
-      .addToggle((toggle) =>
-        toggle
-          .setValue(
-            this.plugin.settings
-              .alistConfirmRemoteDelete !== false
-          )
-          .onChange(async (value) => {
-            this.plugin.settings
-              .alistConfirmRemoteDelete = value;
-            await this.plugin.saveData(
-              this.plugin.settings
-            );
-          })
-      );
-    const count = Object.keys(
-      this.plugin.settings.shares || {}
-    ).length;
-
-    new Setting(c)
-      .setName("\u672c\u673a\u8bb0\u5f55\u7684\u5206\u4eab")
-      .setDesc("\u5171 " + count + " \u7bc7\u3002")
-      .addButton((button) =>
-        button
-          .setButtonText("\u7ba1\u7406\u5206\u4eab")
-          .onClick(() =>
-            new ShareManagerModal(
-              this.app,
-              this.plugin
-            ).open()
-          )
-      );
-
-    c.createEl("h3", {
-      text: "\u624b\u673a\u7aef\u5feb\u6377\u64cd\u4f5c",
-    });
-    c.createEl("p", {
-      text:
-        "\u624b\u673a\u7aef\u53ef\u4f7f\u7528\u547d\u4ee4\uff1a\u5206\u4eab\u5f53\u524d\u7b14\u8bb0\u3001\u590d\u5236\u5f53\u524d\u5206\u4eab\u94fe\u63a5\u3001\u7ba1\u7406\u5f53\u524d\u7b14\u8bb0\u7684\u5ba2\u6237\u94fe\u63a5\u3001\u67e5\u770b\u5f53\u524d\u7b14\u8bb0\u7684\u5ba2\u6237\u8ba8\u8bba\u3001\u7ba1\u7406\u6240\u6709\u5206\u4eab\u3002",
-      cls: "private-share-muted",
-    });
+  constructor(app,plugin){super(app,plugin);this.plugin=plugin;}
+  display(){
+    const c=this.containerEl;c.empty();
+    c.createEl('p',{text:this.plugin.isMobileDevice()?'本地附件直接显示。手机不上传，附件同步到电脑后自动备份到 VPS。':'本地附件直接显示，电脑自动直传 VPS 保存副本；分享网页使用 VPS 链接。'});
+    new Setting(c).setName('分享地址').setDesc('发布和管理笔记的服务地址。').addText(t=>t.setPlaceholder('https://share.example.com').setValue(this.plugin.settings.serverUrl||'').onChange(async value=>{this.plugin.settings.serverUrl=value.trim();await this.plugin.saveData(this.plugin.settings)}));
+    new Setting(c).setName('连接密钥').setDesc('用于发布、管理和附件备份，不会出现在分享链接中。').addText(t=>{t.inputEl.type='password';t.setValue(this.plugin.settings.apiToken||'').onChange(async value=>{this.plugin.settings.apiToken=value.trim();await this.plugin.saveData(this.plugin.settings)});});
+    new Setting(c).setName('新设备配置').setDesc('导入或导出加密的连接配置。').addButton(b=>b.setButtonText('导入').onClick(()=>new ConfigTransferModal(this.app,this.plugin,'import').open())).addButton(b=>b.setButtonText('导出').onClick(()=>new ConfigTransferModal(this.app,this.plugin,'export').open()));
+    new Setting(c).setName('连接检查').addButton(b=>b.setButtonText('检查连接').onClick(async()=>{b.setDisabled(true);try{await this.plugin.api('/api/shares','GET');new Notice('分享服务连接正常')}catch(e){new Notice('连接失败：'+e.message)}finally{b.setDisabled(false)}}));
+    new Setting(c).setName('分享管理').setDesc('查看分享、修改到期时间、删除分享及查看讨论。').addButton(b=>b.setButtonText('打开').onClick(()=>new ShareManagerModal(this.app,this.plugin).open()));
+    if(!this.plugin.isMobileDevice()){
+      new Setting(c).setName('附件备份').setDesc('自动备份已开启；可手动检查并重试。不会改写本地引用。').addButton(b=>b.setButtonText('检查并重试').onClick(()=>this.plugin.scanDesktopAttachments({manual:true})));
+      new Setting(c).setName('附件清理').setDesc('仅手动清理。先查看候选文件，确认后核实所有引用；无法核实的文件保留。').addButton(b=>b.setButtonText('检查可清理附件').onClick(()=>this.plugin.openAttachmentCleanup()));
+    }
   }
 }
+
 
 module.exports = PrivateSharePlugin;
