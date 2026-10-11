@@ -1,7 +1,7 @@
 {
   "id": "private-share",
   "name": "Private Share",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "minAppVersion": "1.5.0",
   "description": "Share notes with local attachments, VPS backups, previews and discussion.",
   "author": "Local",

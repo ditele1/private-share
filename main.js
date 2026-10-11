@@ -96,7 +96,6 @@ function attachmentMarkup(
     );
   }
   return (
-    (embedded ? "!" : "") +
     "[" +
     (label || name) +
     "](" +

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.1
+
+- Render embedded ZIP archives and other downloadable documents as clickable links instead of broken images.
+- Preserve local Vault references and existing image, audio, video and spreadsheet preview behavior.
+
 ## 0.7.0
 
 - Simplify settings to the share address, connection key and encrypted configuration import/export.
