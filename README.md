@@ -1,41 +1,30 @@
 # Private Share for Obsidian
 
-Version 0.7.0. Share notes through a self-hosted service while keeping attachments local and backing them up to a VPS.
+Version 0.7.2. Publish notes through a self-hosted share service.
 
 [中文说明](README.zh-CN.md)
 
-## What it does
+## Features
 
-- Publish, update, copy and revoke note shares; synchronize share state between devices.
-- Manage expiry, access passwords, comments and visitor confirmation.
-- Automatically back up referenced desktop images, audio, video and documents directly to the configured VPS over HTTPS.
-- Keep Vault files and local references unchanged. Published pages use verified remote attachment links.
-- Resume server-confirmed upload chunks after interruption and show progress.
-- Preview images, audio, video and Excel through the compatible share/file services.
+- Publish, update, copy and revoke shares; synchronize share state between devices.
+- Set access passwords, expiry dates, discussion and visitor confirmation.
 - Import and export encrypted connection profiles.
-- Clean unused remote copies only after an explicit manual confirmation and reference checks.
-
-Mobile does not upload attachments. Synchronize Vault files to a desktop for backup. A mobile share can copy an unbacked image to the share service; other unbacked attachments remain pending until desktop backup.
+- Reuse verified historical attachment links when the local file is unchanged.
+- Display other local attachments as text placeholders without reading or uploading their bytes.
+- Manually inspect and clean historical remote copies with confirmation and reference checks.
 
 ## Setup
 
-Install main.js, manifest.json and styles.css in the private-share plugin directory and enable it. Configure only:
+Install `main.js`, `manifest.json` and `styles.css` in the `private-share` plugin directory. Enable the plugin and configure the share address and connection key supplied by your compatible authenticated share API. This repository contains the plugin, not the server.
 
-1. Share address, for example https://share.example.com.
-2. Connection key supplied by your share service.
+## Upgrade from 0.7.1
 
-There are no AList, LAN fallback, storage backend, upload directory or automatic deletion settings. Desktop backups run on startup, synchronization and periodic checks. Use “Check attachment backups and retry” to retry manually.
+Local attachment uploads, background backups, manual upload/retry commands and publication-time image uploads have been removed on both desktop and mobile. Local files and note references remain unchanged. Publishing and updating send note text and existing remote links, with an empty attachment payload. New local attachments appear as text rather than embedded files on the shared page.
 
-Passwords, expiry and discussion controls belong to the share dialog. Use share management to change expiry or revoke a published note.
+Existing share identities and historical attachment records are retained. Obsolete upload queues are discarded. Historical remote copies are not deleted automatically. Cleanup requires manual confirmation and checks for local and published references; failed verification retains the records. Deleting a remote copy can invalidate links to it.
 
-## Requirements
+Old encrypted profiles remain readable; only the share address and connection key are imported. Keep exported profiles and their passwords private.
 
-A compatible authenticated share API and signed VPS upload/file service are required. This repository contains the Obsidian plugin, not a standalone storage server. Current uploads use 8 MiB chunks and support files up to 2 GiB; server disk-space limits also apply.
+## Validation
 
-## Upgrade and cleanup
-
-Existing share identities, attachment ownership and pending jobs are migrated locally. Obsolete connection fields are discarded. Old encrypted profiles remain readable; only the share address and connection key are imported.
-
-Manual cleanup checks local references, references in other notes and published shares. Verification failures retain records for retry. Historical VPS objects require registered mappings and server-side ownership authorization. A VPS copy is not an immutable historical archive.
-
-Encrypted profiles contain authentication information: keep both the file and password private. Runtime share management tokens and attachment records are not exported.
+Run `node --check main.js` and `node --test tests/*.cjs`.

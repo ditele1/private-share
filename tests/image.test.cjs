@@ -1,10 +1,64 @@
-const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
-class File{constructor(path){this.path=path;this.name=path.split('/').pop();this.extension=this.name.split('.').pop().toLowerCase();this.basename=this.name.replace(/\.[^.]+$/,'');this.stat={size:3,mtime:1};}}
-function load(mobile=false){const c={module:{exports:{}},require(){return {Platform:{isMobile:mobile},Plugin:class{},PluginSettingTab:class{},Modal:class{},Notice:class{},TFile:File,requestUrl:()=>assert.fail('no network for images')}},console,URL,Date,Map,Set,Uint8Array,ArrayBuffer,btoa,atob,window:{}};vm.runInNewContext(fs.readFileSync(path.join(__dirname,'..','main.js'),'utf8'),c);const p=new c.module.exports();p.settings={shares:{},attachmentAssets:{},serverUrl:'https://share.example.test',apiToken:'fixture',alistAutoUpload:true};p.saveData=async()=>{};return p;}
-for(const mobile of [false,true])test((mobile?'mobile':'desktop')+' share copies deduplicated wiki, Markdown and HTML images without changing Vault links',async()=>{const p=load(mobile),note=new File('note.md'),image=new File('图片.PNG');let reads=0;const text='![[图片.PNG]]\n![说明](图片.PNG)\n<img src="图片.PNG" width="100">\n![external](https://example.test/x.png)';p.app={metadataCache:{getFirstLinkpathDest:raw=>raw==='图片.PNG'?image:null},vault:{read:async()=>text,readBinary:async()=>{reads++;return new Uint8Array([1,2,3]).buffer;},adapter:{stat:async()=>image.stat}}};p.desktopUploadAvailable=()=>assert.fail('image-only notes must not contact AList');const {payload}=await p.preparePayload(note,{},null,{skipUpload:true});assert.equal(payload.attachments.length,1);assert.equal(payload.attachments[0].mime,'image/png');assert.equal(payload.attachments[0].dataBase64,'AQID');assert.equal(reads,1);assert.equal((payload.markdown.match(/\{\{ASSET_BASE\}\}\/asset-1.png/g)||[]).length,3);assert(payload.markdown.includes('https://example.test/x.png'));assert.equal(await p.app.vault.read(note),text);assert.equal(Object.keys(p.settings.attachmentAssets).length,0);});
-test('mobile rejects all image formats before reading bytes',async()=>{const p=load(true);for(const ext of ['png','JPG','jpeg','gif','webp','svg','bmp','avif','apng','ico','tif','tiff','heic','heif']){const f=new File('x.'+ext);await assert.rejects(()=>p.uploadFileToVPS(f),/手机/);await assert.rejects(()=>p.performVPSUpload(f,'fixture'),/电脑/);}});
-test('mixed notes back up documents and images while preserving every local reference',async()=>{const p=load(),note=new File('note.md'),image=new File('pic.png'),pdf=new File('file.pdf');let text='![[pic.png]]\n![pic](pic.png)\n<img src="pic.png">\n[file](file.pdf)',uploads=0;p.app={metadataCache:{getFirstLinkpathDest:raw=>raw==='pic.png'?image:raw==='file.pdf'?pdf:null},vault:{read:async()=>text,process:async(f,fn)=>{text=fn(text)}}};p.desktopUploadAvailable=async()=>true;p.validateAListSettings=()=>({});p.getAListToken=async()=> 'fixture';p.uploadFileToVPS=async target=>{assert([image,pdf].includes(target));uploads++;return {backend:'vps',remotePath:'/Obsidian/'+target.name,publicUrl:'https://media.example.test/m/abcdefghijklmnop'}};assert.equal(await p.backupNoteAttachments(note),true);assert.equal(uploads,2);assert(text.includes('![[pic.png]]'));assert(text.includes('![pic](pic.png)'));assert(text.includes('<img src="pic.png">'));assert(text.includes('[file](file.pdf)'));assert(!text.includes('/m/abcdefghijklmnop'));assert.equal(p.settings.attachmentAssets['note.md'].length,2);});
-test('image-only notes queue VPS backups without rewriting local references',()=>{const p=load(),note=new File('note.md'),image=new File('pic.png');p.app={metadataCache:{getFirstLinkpathDest:()=>image}};assert.equal(p.hasLocalAttachmentLinks('![[pic.png]]\n![pic](pic.png)',note),true);});
-test('oversized or changing local images stop share preparation and retain Vault originals',async()=>{const p=load(),note=new File('note.md'),image=new File('pic.png');p.app={metadataCache:{getFirstLinkpathDest:()=>image},vault:{readBinary:()=>assert.fail('oversized image must not be read')}};image.stat.size=17*1024**2;await assert.rejects(()=>p.localImagesForShare('![[pic.png]]',note),/16 MiB/);image.stat.size=3;p.app.vault.readBinary=async()=>new Uint8Array(3).buffer;p.app.vault.adapter={stat:async()=>({size:3,mtime:2})};await assert.rejects(()=>p.localImagesForShare('![[pic.png]]',note),/变化/);});
+const assert = require('node:assert/strict');
+const Module = require('node:module');
+class TFile {
+  constructor(path) {
+    this.path = path;
+    this.name = path.split('/').pop();
+    this.extension = this.name.split('.').pop();
+    this.basename = this.name.replace(/\.[^.]+$/, '');
+    this.stat = {size: 32, mtime: 50};
+  }
+}
+const load = Module._load;
+Module._load = function(name, ...args) {
+  if (name === 'obsidian') {
+    return {Plugin: class {}, PluginSettingTab: class {}, Modal: class {}, Notice: class {}, TFile};
+  }
+  return load.call(this, name, ...args);
+};
+const Plugin = require('../main.js');
+const plugin = new Plugin();
+const note = new TFile('notes/test.md');
+const files = Object.fromEntries(['test.md', 'new picture.png', 'old.png', 'manual.pdf'].map(name => [name, new TFile(name)]));
+const original = [
+  '![[new picture.png]]', '[说明](manual.pdf)', '[[manual.pdf|手册]]',
+  '![alt](new%20picture.png)', '<img src="new%20picture.png">',
+  '![[old.png]]', '<img src="old.png">',
+  '![external](https://example.com/file.png)', '[[test.md|笔记]]'
+].join('\n');
+plugin.app = {
+  vault: {
+    read: async () => original,
+    readBinary: () => {throw Error('Unexpected local attachment binary read');}
+  },
+  metadataCache: {getFirstLinkpathDest: path => files[path]}
+};
+plugin.settings = {shares: {}, attachmentAssets: {
+  [note.path]: [{originalLocalPath: 'old.png', publicUrl: 'https://example.com/old', localSize: 32, localMtime: 50}]
+}};
+const expected = [
+  '**new picture.png（本地附件）**', '**说明（本地附件）**', '**手册（本地附件）**',
+  '**alt（本地附件）**', '**new picture.png（本地附件）**',
+  '![old.png](https://example.com/old)', '<img src="https://example.com/old">',
+  '![external](https://example.com/file.png)', '笔记'
+].join('\n');
+const calls = [];
+plugin.api = async (path, method, payload) => {
+  calls.push({path, method});
+  assert.deepEqual(payload.attachments, []);
+  assert.equal(payload.markdown, expected);
+  assert.equal(payload.options.discussionEnabled, true);
+  return {shareId: 'share', editToken: 'edit', url: 'https://example.com/share', discussionEnabled: true};
+};
+plugin.saveData = async () => {};
+plugin.copyUrl = async () => {};
+(async () => {
+  const opts = {discussionEnabled: true};
+  await plugin.shareFile(note, opts, {skipClaim: true});
+  await plugin.updateShare(note, opts, {skipClaim: true});
+  assert.deepEqual(calls, [{path:'/api/publish', method:'POST'}, {path:'/api/update/share', method:'PUT'}]);
+  assert.equal(plugin.settings.shares[note.path].shareId, 'share');
+  assert.deepEqual([...plugin.localAttachmentTargets(original, note)].sort(), ['manual.pdf', 'new picture.png', 'old.png']);
+  console.log('Publish, update, historical links, and local attachment placeholders passed.');
+})().catch(error => {console.error(error); process.exitCode = 1;});
 
-for(const ext of ['zip','7z','pdf','xlsx','xls','docx'])test('embedded '+ext+' publishes a clickable download link while preserving the local reference',async()=>{const p=load(),note=new File('note.md'),file=new File('attachment.'+ext),url='https://files.example.test/m/abcdefghijklmnop',text='![[attachment.'+ext+']]';p.settings.attachmentAssets[note.path]=[{originalLocalPath:file.path,localSize:3,localMtime:1,publicUrl:url,remotePath:'/Obsidian/'+file.name}];p.app={metadataCache:{getFirstLinkpathDest:raw=>raw===file.name?file:null},vault:{read:async()=>text,readBinary:()=>assert.fail('verified backup must not be read again')}};const {payload}=await p.preparePayload(note,{},null,{skipUpload:true});assert.equal(payload.markdown,'['+file.name+']('+url+')');assert.equal(await p.app.vault.read(note),text);});

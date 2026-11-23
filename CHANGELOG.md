@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.2
+
+- Remove automatic/manual local attachment uploads, chunk retries and image uploads during publication.
+- Keep publishing, updates, passwords, expiry, discussion and share management.
+- Reuse unchanged historical attachment links; render unbacked local attachments as text.
+- Preserve local files and references, encrypted profiles and confirmed historical cleanup.
+
 ## 0.7.1
 
 - Render embedded ZIP archives and other downloadable documents as clickable links instead of broken images.
